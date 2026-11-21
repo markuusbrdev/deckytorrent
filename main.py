@@ -67,6 +67,8 @@ def magnet_hash(magnet):
 
 
 def validate_catalog(data):
+    if not isinstance(data, dict) or not all(isinstance(data.get(key), list) for key in ("categorias", "pacotes")):
+        raise ValueError("O catálogo precisa conter as listas categorias e pacotes.")
     categories = set()
     for category in data["categorias"]:
         key = item_id(category["id"])
@@ -82,11 +84,55 @@ def validate_catalog(data):
         magnet_hash(entry["magnet"])
         if key in ids or entry["categoria"] not in categories:
             raise ValueError("Pacote duplicado ou categoria inválida.")
-        if not re.fullmatch(r"imagens/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_-]+\.(webp|jpg|jpeg|png)",
+        if not re.fullmatch(r"(?:imagens|images|image)/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_-]+\.(webp|jpg|jpeg|png)",
                             entry["imagem"]):
-            raise ValueError("Use uma capa PNG, JPEG ou WebP em imagens/.")
+            raise ValueError("Use uma capa PNG, JPEG ou WebP em imagens/, images/ ou image/.")
         ids.add(key)
     return data
+
+
+def repository_url(raw_url):
+    parts = urllib.parse.urlsplit(raw_url).path.strip("/").split("/")
+    return f"https://github.com/{parts[0]}/{parts[1]}" if len(parts) >= 4 else ""
+
+
+def repository_parts(value):
+    if not isinstance(value, str) or len(value) > 250:
+        raise ValueError("Informe a URL de um repositório público do GitHub.")
+    match = re.fullmatch(
+        r"https://github\.com/([a-zA-Z0-9][a-zA-Z0-9-]{0,38})/([a-zA-Z0-9_.-]{1,100})/?",
+        value.strip(),
+    )
+    if not match or match[2].removesuffix(".git") in {"", ".", ".."}:
+        raise ValueError("Use um endereço como https://github.com/usuario/repositorio.")
+    return match[1], match[2].removesuffix(".git")
+
+
+class NoCatalogRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args):
+        return None
+
+
+def read_remote_catalog(url, cached):
+    source = urllib.parse.urlsplit(url)
+    if source.scheme != "https" or source.netloc != "raw.githubusercontent.com":
+        raise ValueError("Configure a URL HTTPS do arquivo em raw.githubusercontent.com.")
+    headers = {"If-None-Match": cached["etag"]} if cached.get("etag") else {}
+    request = urllib.request.Request(url, headers=headers)
+    opener = urllib.request.build_opener(NoCatalogRedirect())
+    try:
+        with opener.open(request, timeout=6) as response:
+            body = response.read(1_048_577)
+            if len(body) > 1_048_576:
+                raise ValueError("Catálogo acima do limite de 1 MiB.")
+            data = validate_catalog(json.loads(body.decode("utf-8")))
+            return {"url": url, "etag": response.headers.get("ETag"), "data": data}
+    except urllib.error.HTTPError as error:
+        status = error.code
+        error.close()
+        if status == 304 and cached:
+            return cached
+        raise
 
 
 def aria_binary():
@@ -271,40 +317,63 @@ class Plugin:
         async with self.catalog_lock:
             return await asyncio.to_thread(self.load_catalog, refresh)
 
+    async def change_store(self, value):
+        owner, repo = repository_parts(value)
+        async with self.catalog_lock:
+            return await asyncio.to_thread(self._change_store, owner, repo)
+
+    def _change_store(self, owner, repo):
+        default_url = read_json(ROOT / "configuracao.json").get("urlCatalogo", "").strip()
+        default_repo = repository_url(default_url)
+        repo_url = f"https://github.com/{owner}/{repo}"
+        active_path = STATE / "loja.json"
+        if default_repo and repo_url.casefold() == default_repo.casefold():
+            active_path.unlink(missing_ok=True)
+            return self.load_catalog(False)
+
+        url = f"https://raw.githubusercontent.com/{owner}/{repo}/HEAD/catalogo.json"
+        try:
+            candidate = read_remote_catalog(url, {})
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                raise ValueError("O repositório precisa ser público e ter catalogo.json na raiz.") from error
+            raise ValueError("O GitHub não conseguiu carregar o catálogo. Tente novamente.") from error
+        except OSError as error:
+            raise ValueError("Não foi possível acessar o GitHub. Confira a conexão.") from error
+        except (ValueError, TypeError, KeyError, AttributeError) as error:
+            raise ValueError("O catalogo.json não está no formato do Decky Torrent.") from error
+        save_json(active_path, candidate)
+        return self.load_catalog(False)
+
     def load_catalog(self, refresh, include_covers=True):
-        config = read_json(ROOT / "configuracao.json")
-        url = config.get("urlCatalogo", "").strip()
-        cache_path = STATE / "catalogo-cache.json"
-        cached = read_json(cache_path) if cache_path.exists() else {}
-        if cached.get("url") != url:
-            cached = {}
+        default_url = read_json(ROOT / "configuracao.json").get("urlCatalogo", "").strip()
+        active_path = STATE / "loja.json"
+        if active_path.is_file():
+            cache_path = active_path
+            cached = read_json(cache_path)
+            url = cached["url"]
+        else:
+            cache_path = STATE / "catalogo-cache.json"
+            url = default_url
+            cached = read_json(cache_path) if cache_path.is_file() else {}
+            if cached.get("url") != url:
+                cached = {}
+
         notice = ""
         if refresh and url:
             try:
-                source = urllib.parse.urlsplit(url)
-                if source.scheme != "https" or source.hostname != "raw.githubusercontent.com":
-                    raise ValueError("Configure a URL HTTPS do arquivo em raw.githubusercontent.com.")
-                headers = {"If-None-Match": cached["etag"]} if cached.get("etag") else {}
-                request = urllib.request.Request(url, headers=headers)
-                with urllib.request.urlopen(request, timeout=6) as response:
-                    body = response.read(1_048_577)
-                    if len(body) > 1_048_576:
-                        raise ValueError("Catálogo acima do limite de 1 MiB.")
-                    data = validate_catalog(json.loads(body.decode("utf-8")))
-                    cached = {"url": url, "etag": response.headers.get("ETag"), "data": data}
-                save_json(cache_path, cached)
-            except urllib.error.HTTPError as error:
-                if error.code != 304 or not cached:
-                    notice = "Não foi possível atualizar a loja. Exibindo o catálogo salvo."
+                updated = read_remote_catalog(url, cached)
+                if updated is not cached:
+                    save_json(cache_path, updated)
+                    cached = updated
             except (OSError, ValueError, TypeError, KeyError, AttributeError):
                 notice = "Não foi possível atualizar a loja. Exibindo o catálogo salvo."
 
         raw = cached.get("data") or validate_catalog(read_json(ROOT / "catalogo.json"))
+        if not include_covers:
+            return raw
         entries = []
         for entry in raw["pacotes"]:
-            if not include_covers:
-                entries.append(entry)
-                continue
             cover = ""
             if cached:
                 cover = urllib.parse.urljoin(url, entry["imagem"])
@@ -316,13 +385,16 @@ class Plugin:
             entries.append({**entry, "capa": cover})
         if not url:
             notice = "Catálogo local. A atualização pelo GitHub ainda não foi configurada."
-        return {"categorias": raw["categorias"], "pacotes": entries, "aviso": notice}
+        return {
+            "categorias": raw["categorias"], "pacotes": entries, "aviso": notice,
+            "loja": repository_url(url), "lojaPadrao": repository_url(default_url),
+        }
 
-    async def get_package_size(self, package_id):
+    async def get_package_size(self, package_id, expected_magnet=None):
         async with self.catalog_lock:
             catalog = await asyncio.to_thread(self.load_catalog, False, False)
         entry = next((item for item in catalog["pacotes"] if item["id"] == package_id), None)
-        if entry is None:
+        if entry is None or (expected_magnet is not None and entry["magnet"] != expected_magnet):
             return None
         magnet = entry["magnet"]
         info_hash = magnet_hash(magnet)
@@ -358,11 +430,12 @@ class Plugin:
         self.size_retry[info_hash] = asyncio.get_running_loop().time() + 90
         return None
 
-    async def start_download(self, package_id, folder):
-        catalog = await self.get_catalog(False)
+    async def start_download(self, package_id, folder, expected_magnet=None):
+        async with self.catalog_lock:
+            catalog = await asyncio.to_thread(self.load_catalog, False, False)
         entry = next((item for item in catalog["pacotes"] if item["id"] == package_id), None)
-        if entry is None:
-            raise ValueError("Este pacote saiu do catálogo. Reabra a Loja.")
+        if entry is None or (expected_magnet is not None and entry["magnet"] != expected_magnet):
+            raise ValueError("Este pacote mudou ou saiu do catálogo. Reabra a Loja.")
         info_hash = magnet_hash(entry["magnet"])
         path = Path(folder).resolve(strict=True)
         if not path.is_dir() or not os.access(path, os.W_OK | os.X_OK):

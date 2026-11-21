@@ -48,6 +48,11 @@ export const styles = `
 .dt-store-tools .dt-search-toggle { width: auto; min-width: 0; }
 .dt-filter { width: min(100%, 260px); }
 .dt-search { max-width: 520px; margin-top: 12px; }
+.dt-store-form {
+  max-width: 680px; margin-top: 12px; padding: 12px 16px;
+  background: var(--dt-surface); border-radius: 9px;
+}
+.dt-store-form .dt-store-tools { margin-top: 8px; }
 .dt-page .dt-status { min-height: 1em; margin: 8px 0 12px; font-size: .82rem; }
 .dt-empty { border: 1px solid var(--dt-border); border-radius: 9px; padding: 20px; margin: 0; }
 .dt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 155px), 1fr)); gap: 14px; }

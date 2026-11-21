@@ -11,7 +11,7 @@ import { styles } from "./styles";
 
 type Option = { id: string; nome: string };
 type Package = Option & { categoria: string; capa: string; magnet: string };
-type Catalog = { categorias: Option[]; pacotes: Package[]; aviso: string };
+type Catalog = { categorias: Option[]; pacotes: Package[]; aviso: string; loja: string; lojaPadrao: string };
 type Status = "active" | "waiting" | "paused" | "complete" | "error";
 type Download = Option & {
   pasta: string;
@@ -29,10 +29,11 @@ type Queue = { downloads: Download[]; aviso: string };
 const storeRoute = "/decky-torrent/loja";
 const downloadsRoute = "/decky-torrent/downloads";
 const getCatalog = callable<[refresh: boolean], Catalog>("get_catalog");
-const getPackageSize = callable<[id: string], number | null>("get_package_size");
+const changeStore = callable<[repository: string], Catalog>("change_store");
+const getPackageSize = callable<[id: string, magnet: string], number | null>("get_package_size");
 const listDownloads = callable<[], Queue>("list_downloads");
 const homeFolder = callable<[], string>("home_folder");
-const enqueue = callable<[id: string, folder: string], string>("start_download");
+const enqueue = callable<[id: string, folder: string, magnet: string], string>("start_download");
 const deleteDownload = callable<[id: string, deleteFiles: boolean], void>("delete_download");
 const setPaused = callable<[id: string, pause: boolean], void>("set_paused");
 const checkExecutable = callable<[id: string, path: string], string>("check_executable");
@@ -104,7 +105,8 @@ function useAction() {
       await action();
     } catch (failure) {
       if (failure !== "User canceled") {
-        setError(failure instanceof Error ? failure.message : "Não foi possível concluir a ação.");
+        const message = failure instanceof Error ? failure.message : failure;
+        setError(typeof message === "string" ? message : "Não foi possível concluir a ação.");
       }
     } finally {
       inFlight.current = false;
@@ -112,7 +114,7 @@ function useAction() {
     }
   }
 
-  return { run, busy, error };
+  return { run, busy, error, clearError: () => setError("") };
 }
 
 function Cover({ src }: { src: string }) {
@@ -137,12 +139,12 @@ function CatalogCard({ entry, disabled, download }: {
   const [bytes, setBytes] = useState<number | null>();
   useEffect(() => {
     let current = true;
-    void getPackageSize(entry.id).then(
+    void getPackageSize(entry.id, entry.magnet).then(
       (result) => { if (current) setBytes(result); },
       () => { if (current) setBytes(null); },
     );
     return () => { current = false; };
-  }, [entry.id]);
+  }, [entry.id, entry.magnet]);
 
   return (
     <DialogButton
@@ -258,6 +260,10 @@ function searchText(value: string) {
 function StorePage() {
   const [catalog, setCatalog] = useState<Catalog>();
   const [error, setError] = useState("");
+  const [storeOpen, setStoreOpen] = useState(false);
+  const [repositoryDraft, setRepositoryDraft] = useState("");
+  const storeRevision = useRef(0);
+  const storeAction = useAction();
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("");
@@ -265,32 +271,49 @@ function StorePage() {
   const action = useAction();
 
   useEffect(() => {
-    let current = true;
+    let mounted = true;
+    const revision = storeRevision.current;
+    const current = () => mounted && storeRevision.current === revision;
     void (async () => {
       try {
         const cached = await getCatalog(false);
-        if (current) setCatalog(cached);
+        if (current()) setCatalog(cached);
       } catch {
-        if (current) setError("Falha ao carregar o catálogo salvo.");
+        if (current()) setError("Falha ao carregar o catálogo salvo.");
       }
       try {
         const refreshed = await refreshCatalog();
-        if (current) {
+        if (current()) {
           setCatalog(refreshed);
           setError("");
         }
       } catch {
-        if (current) setError("Falha ao atualizar a Loja. Reabra esta tela para tentar novamente.");
+        if (current()) setError("Falha ao atualizar a Loja. Reabra esta tela para tentar novamente.");
       }
     })();
-    return () => { current = false; };
+    return () => { mounted = false; };
   }, []);
 
   async function download(entry: Package) {
     const home = await homeFolder().catch(() => "/home/deck");
     const { realpath } = await openFilePicker(FileSelectionType.FOLDER, home, false, true);
-    await enqueue(entry.id, realpath);
+    await enqueue(entry.id, realpath, entry.magnet);
     openPage(downloadsRoute);
+  }
+
+  function selectStore(repository: string) {
+    void storeAction.run(async () => {
+      const next = await changeStore(repository);
+      storeRevision.current += 1;
+      setCatalog(next);
+      setCategory("");
+      setQuery("");
+      setSearchOpen(false);
+      setLimit(12);
+      setError("");
+      setStoreOpen(false);
+      toaster.toast({ title: "Loja alterada", body: next.loja });
+    });
   }
 
   const selected = catalog?.categorias.some(({ id }) => id === category) ? category : "";
@@ -303,8 +326,19 @@ function StorePage() {
   return (
     <Page
       title="Loja"
-      toolbar={catalog && (
+      toolbar={
         <Focusable className="dt-store-tools" flow-children="right">
+          <DialogButton
+            className="dt-search-toggle"
+            disabled={storeAction.busy || action.busy}
+            onClick={() => {
+              storeAction.clearError();
+              setRepositoryDraft(catalog?.loja ?? "");
+              setStoreOpen(!storeOpen);
+            }}
+          >
+            Trocar de loja
+          </DialogButton>
           <DialogButton
             className="dt-search-toggle"
             onClick={() => {
@@ -317,17 +351,51 @@ function StorePage() {
               <FaSearch aria-hidden /> {searchOpen ? "Fechar pesquisa" : "Pesquisar"}
             </span>
           </DialogButton>
-          <div className="dt-filter">
-            <DropdownItem
-              label="Categoria"
-              selectedOption={selected}
-              rgOptions={[{ data: "", label: "Todas" }, ...catalog.categorias.map(({ id, nome }) => ({ data: id, label: nome }))]}
-              onChange={({ data }) => { setCategory(data); setLimit(12); }}
-            />
-          </div>
+          {catalog && (
+            <div className="dt-filter">
+              <DropdownItem
+                label="Categoria"
+                selectedOption={selected}
+                rgOptions={[{ data: "", label: "Todas" }, ...catalog.categorias.map(({ id, nome }) => ({ data: id, label: nome }))]}
+                onChange={({ data }) => { setCategory(data); setLimit(12); }}
+              />
+            </div>
+          )}
+        </Focusable>
+      }
+    >
+      {storeOpen && (
+        <Focusable className="dt-store-form">
+          <TextField
+            label="Repositório da loja"
+            description="Use um repositório público do GitHub com catalogo.json na raiz."
+            value={repositoryDraft}
+            disabled={storeAction.busy}
+            focusOnMount
+            onChange={(event) => setRepositoryDraft(event.currentTarget.value)}
+          />
+          {storeAction.error && <p className="dt-error" role="alert">{storeAction.error}</p>}
+          <Focusable className="dt-store-tools" flow-children="right">
+            <DialogButton
+              className="dt-search-toggle"
+              disabled={storeAction.busy || !repositoryDraft.trim()}
+              onClick={() => selectStore(repositoryDraft)}
+            >
+              {storeAction.busy ? "Verificando loja…" : "Salvar loja"}
+            </DialogButton>
+            {catalog?.lojaPadrao && catalog.loja !== catalog.lojaPadrao && (
+              <DialogButton className="dt-search-toggle" disabled={storeAction.busy}
+                onClick={() => selectStore(catalog.lojaPadrao)}>
+                Usar loja padrão
+              </DialogButton>
+            )}
+            <DialogButton className="dt-search-toggle" disabled={storeAction.busy}
+              onClick={() => setStoreOpen(false)}>
+              Cancelar
+            </DialogButton>
+          </Focusable>
         </Focusable>
       )}
-    >
       {searchOpen && (
         <div className="dt-search">
           <TextField
@@ -353,9 +421,9 @@ function StorePage() {
         <Focusable className="dt-grid">
           {packages.slice(0, limit).map((entry) => (
             <CatalogCard
-              key={`${entry.id}:${entry.magnet}`}
+              key={`${catalog?.loja}:${entry.id}:${entry.magnet}`}
               entry={entry}
-              disabled={action.busy}
+              disabled={action.busy || storeAction.busy}
               download={() => action.run(() => download(entry))}
             />
           ))}

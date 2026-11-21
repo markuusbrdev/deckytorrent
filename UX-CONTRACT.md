@@ -4,6 +4,7 @@
 | --- | --- | --- |
 | Navegação | Decky DialogButton, Focusable e routerHook | Loja e Downloads fecham o painel lateral e abrem uma rota em tela cheia. Voltar usa o histórico da Steam. |
 | Select/Listbox | Decky DropdownItem | O filtro de categoria usa o menu do Modo Jogo. |
+| Troca de loja | Decky TextField e DialogButton | A nova fonte é validada antes de substituir a loja atual. |
 | Pesquisa | Decky TextField | A busca local por título ignora acentos e combina com o filtro de categoria. |
 | Pasta e executável | Decky openFilePicker | Cancelar retorna à tela anterior. O backend valida pasta e executável. |
 | Toast | Decky toaster | A conclusão também fica registrada em Downloads. |
