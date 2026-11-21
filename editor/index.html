@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Editor de catálogo · Catálogo Decky</title>
+  <link rel="stylesheet" href="editor.css">
+  <script src="editor.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div class="top-inner">
+      <div>
+        <span class="product">Catálogo Decky</span>
+        <h1>Editor de catálogo</h1>
+      </div>
+      <div class="toolbar">
+        <button id="link-folder" type="button">Vincular pasta do projeto</button>
+        <button id="import" type="button">Importar catálogo</button>
+        <input id="json-file" type="file" accept=".json,application/json" hidden>
+        <button id="export" class="primary" type="button">Exportar ZIP</button>
+      </div>
+    </div>
+  </header>
+  <main>
+    <div class="status-row">
+      <div><p id="storage-mode"></p><p id="notice" role="status"></p></div>
+      <span id="count"></span>
+    </div>
+    <div class="workspace">
+      <section class="panel" aria-labelledby="list-title">
+        <div class="panel-heading">
+          <h2 id="list-title">Pacotes</h2>
+          <button id="new" type="button">Novo pacote</button>
+        </div>
+        <div id="package-list"></div>
+        <p id="empty" class="empty">Os pacotes cadastrados aparecem aqui.</p>
+        <div class="panel-footer">
+          <button id="import-covers" type="button">Carregar pasta de capas</button>
+          <input id="covers-folder" type="file" webkitdirectory multiple hidden>
+          <p>Selecione a pasta <code>imagens</code> se quiser incluir capas já existentes no ZIP.</p>
+        </div>
+      </section>
+      <section class="panel" aria-labelledby="form-title">
+        <div class="panel-heading">
+          <h2 id="form-title">Novo pacote</h2>
+        </div>
+        <form id="package-form" novalidate>
+          <label for="name">Nome do pacote</label>
+          <input id="name" maxlength="150" required aria-describedby="form-error">
+          <label for="magnet">Link magnet</label>
+          <textarea id="magnet" rows="3" maxlength="8192" placeholder="magnet:?xt=urn:btih:…" spellcheck="false" required aria-describedby="form-error"></textarea>
+          <label for="category">Categoria</label>
+          <select id="category" required aria-describedby="form-error"></select>
+          <button id="taxonomy" type="button">Adicionar categoria</button>
+          <div class="cover-field">
+            <div id="cover-preview" class="cover-preview">
+              <img id="preview-image" alt="" hidden>
+              <span id="preview-text">Sem capa</span>
+            </div>
+            <div class="cover-controls">
+              <label for="cover">Capa</label>
+              <input id="cover" type="file" accept=".png,.jpg,.jpeg,.webp" aria-describedby="cover-help form-error">
+              <p id="cover-help">PNG, JPEG ou WebP de até 1 MiB.</p>
+            </div>
+          </div>
+          <p id="form-error" class="error" role="alert"></p>
+          <div class="form-actions">
+            <button id="remove" class="danger" type="button" hidden>Remover pacote</button>
+            <button class="primary" type="submit">Salvar pacote</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  </main>
+  <dialog id="taxonomy-dialog" aria-labelledby="taxonomy-title">
+    <form id="taxonomy-form" novalidate>
+      <h2 id="taxonomy-title">Adicionar categoria</h2>
+      <label for="category-name">Nome da categoria</label>
+      <input id="category-name" maxlength="150" required aria-describedby="taxonomy-error">
+      <p id="taxonomy-error" class="error" role="alert"></p>
+      <div class="dialog-actions">
+        <button type="button" data-close>Cancelar</button>
+        <button class="primary" type="submit">Adicionar</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-body">
+    <form method="dialog">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-body"></p>
+      <div class="dialog-actions">
+        <button value="cancel" autofocus>Cancelar</button>
+        <button id="confirm-action" class="danger" value="ok"></button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>
