@@ -89,6 +89,54 @@ def validate_catalog(data):
     return data
 
 
+def aria_binary():
+    bundled = ROOT / "bin" / "aria2c"
+    if bundled.is_file():
+        if not os.access(bundled, os.X_OK):
+            bundled.chmod(bundled.stat().st_mode | 0o100)
+        return str(bundled)
+    binary = shutil.which("aria2c")
+    if not binary:
+        raise RuntimeError("aria2c indisponível. Consulte a instalação no README.")
+    return binary
+
+
+async def aria_command(*args, timeout, capture=False):
+    process = await asyncio.create_subprocess_exec(
+        aria_binary(), "--no-conf", *args, env={**os.environ, "LC_ALL": "C"},
+        stdout=asyncio.subprocess.PIPE if capture else asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        output, _ = await asyncio.wait_for(process.communicate(), timeout)
+    finally:
+        if process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            await process.wait()
+    return output if process.returncode == 0 else None
+
+
+async def magnet_size(magnet, info_hash):
+    with tempfile.TemporaryDirectory(prefix="magnet-", dir=STATE) as directory:
+        target = Path(directory)
+        await aria_command(
+            "--bt-metadata-only=true", "--bt-save-metadata=true", "--seed-time=0",
+            "--listen-port=7000-7099", "--dht-listen-port=7100-7199",
+            f"--dht-file-path={target / 'dht.dat'}", f"--dht-file-path6={target / 'dht6.dat'}",
+            f"--stop-with-process={os.getpid()}", "--stop=20",
+            f"--dir={directory}", "--", magnet, timeout=23,
+        )
+        torrent = target / f"{info_hash}.torrent"
+        if not torrent.is_file() or torrent.stat().st_size > 16 * 1024 * 1024:
+            return None
+        output = await aria_command("--show-files=true", str(torrent), timeout=3, capture=True)
+        match = re.search(rb"^Total Length: [^\n]* \(([0-9,]+)\)$", output or b"", re.MULTILINE)
+        return int(match[1].replace(b",", b"")) if match else None
+
+
 class AriaError(RuntimeError):
     pass
 
@@ -130,12 +178,7 @@ class Aria:
     async def start(self):
         if self.process and self.process.returncode is None:
             return
-        bundled = ROOT / "bin" / "aria2c"
-        if bundled.is_file() and not os.access(bundled, os.X_OK):
-            bundled.chmod(bundled.stat().st_mode | 0o100)
-        binary = str(bundled) if bundled.is_file() else shutil.which("aria2c")
-        if not binary:
-            raise RuntimeError("aria2c indisponível. Consulte a instalação no README.")
+        binary = aria_binary()
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             self.port = listener.getsockname()[1]
@@ -200,12 +243,25 @@ class Plugin:
         self.lock = asyncio.Lock()
         self.catalog_lock = asyncio.Lock()
         self.aria = Aria()
+        self.size_slots = asyncio.Semaphore(2)
+        self.size_tasks = {}
+        self.size_retry = {}
+        self.sizes_file = STATE / "tamanhos.json"
+        try:
+            loaded = read_json(self.sizes_file) if self.sizes_file.is_file() else {}
+            self.sizes = {
+                key: value for key, value in loaded.items() if type(value) is int and value >= 0
+            } if isinstance(loaded, dict) else {}
+        except (OSError, ValueError):
+            self.sizes = {}
         self.runtime_error = ""
         self.monitor = asyncio.create_task(self.watch())
 
     async def _unload(self):
-        self.monitor.cancel()
-        await asyncio.gather(self.monitor, return_exceptions=True)
+        tasks = [self.monitor, *self.size_tasks.values()]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         await self.aria.stop()
 
     async def home_folder(self):
@@ -215,7 +271,7 @@ class Plugin:
         async with self.catalog_lock:
             return await asyncio.to_thread(self.load_catalog, refresh)
 
-    def load_catalog(self, refresh):
+    def load_catalog(self, refresh, include_covers=True):
         config = read_json(ROOT / "configuracao.json")
         url = config.get("urlCatalogo", "").strip()
         cache_path = STATE / "catalogo-cache.json"
@@ -246,6 +302,9 @@ class Plugin:
         raw = cached.get("data") or validate_catalog(read_json(ROOT / "catalogo.json"))
         entries = []
         for entry in raw["pacotes"]:
+            if not include_covers:
+                entries.append(entry)
+                continue
             cover = ""
             if cached:
                 cover = urllib.parse.urljoin(url, entry["imagem"])
@@ -258,6 +317,46 @@ class Plugin:
         if not url:
             notice = "Catálogo local. A atualização pelo GitHub ainda não foi configurada."
         return {"categorias": raw["categorias"], "pacotes": entries, "aviso": notice}
+
+    async def get_package_size(self, package_id):
+        async with self.catalog_lock:
+            catalog = await asyncio.to_thread(self.load_catalog, False, False)
+        entry = next((item for item in catalog["pacotes"] if item["id"] == package_id), None)
+        if entry is None:
+            return None
+        magnet = entry["magnet"]
+        info_hash = magnet_hash(magnet)
+        for job in self.jobs.values():
+            if job["hash"] == info_hash and job.get("total", 0) > 0:
+                return job["total"]
+        if info_hash in self.sizes:
+            return self.sizes[info_hash]
+        if self.size_retry.get(info_hash, 0) > asyncio.get_running_loop().time():
+            return None
+        task = self.size_tasks.get(info_hash)
+        if not task:
+            task = asyncio.create_task(self._probe_size(magnet))
+            self.size_tasks[info_hash] = task
+        return await asyncio.shield(task)
+
+    async def _probe_size(self, magnet):
+        info_hash = magnet_hash(magnet)
+        try:
+            async with self.size_slots:
+                size = await magnet_size(magnet, info_hash)
+            if size is not None:
+                self.sizes[info_hash] = size
+                try:
+                    save_json(self.sizes_file, self.sizes)
+                except OSError:
+                    decky.logger.warning("Não foi possível salvar o cache de tamanhos.")
+                return size
+        except (OSError, RuntimeError, asyncio.TimeoutError, ValueError):
+            pass
+        finally:
+            self.size_tasks.pop(info_hash, None)
+        self.size_retry[info_hash] = asyncio.get_running_loop().time() + 90
+        return None
 
     async def start_download(self, package_id, folder):
         catalog = await self.get_catalog(False)
@@ -274,9 +373,11 @@ class Plugin:
             await self.aria.start()
             destination = tempfile.mkdtemp(prefix=entry["id"] + "-", dir=path)
             job_id = secrets.token_hex(8)
+            folder_stat = Path(destination).stat()
             job = {
                 "id": job_id, "gid": job_id, "nome": entry["nome"], "hash": info_hash,
                 "magnet": entry["magnet"], "pasta": destination,
+                "pasta_identidade": [folder_stat.st_dev, folder_stat.st_ino],
                 "estado": "waiting", "baixado": 0, "total": 0, "velocidade": 0,
             }
             self.jobs[job_id] = job
@@ -292,15 +393,22 @@ class Plugin:
         async with self.lock:
             public = []
             for job in reversed(list(self.jobs.values())):
-                public.append({field: job.get(field) for field in (
+                download = {field: job.get(field) for field in (
                     "id", "nome", "pasta", "estado", "baixado", "total",
-                    "velocidade", "erro", "atalho",
-                )})
+                    "velocidade", "erro", "atalho", "apagando",
+                )}
+                download["temExecutavel"] = job["estado"] == "complete" and any(
+                    Path(file).suffix.lower() == ".exe" and Path(file).is_file()
+                    for file in job.get("arquivos", [])
+                )
+                public.append(download)
             return {"downloads": public, "aviso": self.runtime_error}
 
     async def set_paused(self, job_id, pause):
         async with self.lock:
             job = self.jobs[job_id]
+            if job.get("apagando"):
+                raise ValueError("Este download está com a exclusão pendente.")
             if job["estado"] in TERMINAL:
                 raise ValueError("Este download já terminou.")
             await self.aria.start()
@@ -315,6 +423,85 @@ class Plugin:
                     await self.aria.call("aria2.unpause", job["gid"])
             job.update(estado="paused" if pause else "waiting", velocidade=0)
             save_json(self.jobs_file, self.jobs)
+
+    def _download_folder(self, job):
+        folder = Path(job["pasta"])
+        if (not folder.is_absolute() or folder.resolve() != folder
+                or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}-[a-z0-9_]{8}", folder.name)):
+            raise ValueError("A pasta do download não é uma subpasta válida do plugin.")
+        if not folder.parent.is_dir():
+            raise ValueError("Reconecte o armazenamento para apagar a pasta do download.")
+        if any(other is not job and Path(other["pasta"]).is_relative_to(folder)
+               for other in self.jobs.values()):
+            raise ValueError("A pasta contém outro download registrado.")
+        if folder.exists():
+            stat = folder.stat()
+            identity = job.get("pasta_identidade")
+            if not folder.is_dir() or folder.is_mount() or (
+                identity is not None and identity != [stat.st_dev, stat.st_ino]
+            ):
+                raise ValueError("A pasta do download foi substituída ou é um ponto de montagem.")
+        return folder
+
+    async def _stop_download(self, job):
+        if not self.aria.process or self.aria.process.returncode is not None:
+            return
+        gid = job["gid"]
+        requested = set()
+        for _ in range(30):
+            status = await self.aria.status(gid)
+            if not status or status["status"] in {"removed", "error"}:
+                return
+            if status.get("followedBy"):
+                gid = status["followedBy"][0]
+                continue
+            if status["status"] == "complete":
+                if any(file.get("path") and Path(file["path"]).is_relative_to(job["pasta"])
+                       for file in status.get("files", [])):
+                    job["gid"] = gid
+                    await self.update_job(job)
+                    raise ValueError("O download foi concluído. Confirme novamente para remover só da lista.")
+                return
+            if gid not in requested:
+                try:
+                    await self.aria.call("aria2.forceRemove", gid)
+                    requested.add(gid)
+                except AriaError:
+                    # A metadata transfer can finish as the removal request reaches aria2.
+                    latest = await self.aria.status(gid)
+                    if latest and latest["status"] == status["status"] and not latest.get("followedBy"):
+                        raise
+            await asyncio.sleep(0.2)
+        raise RuntimeError("Não foi possível parar a transferência. Tente apagar novamente.")
+
+    async def delete_download(self, job_id, delete_files):
+        async with self.lock:
+            job = self.jobs.get(job_id)
+            if job is None:
+                return
+            if delete_files != (job["estado"] != "complete"):
+                raise ValueError("O estado do download mudou. Confirme novamente.")
+
+            if delete_files:
+                self._download_folder(job)
+                await self._stop_download(job)
+                if not job.get("apagando"):
+                    job["apagando"] = True
+                    try:
+                        save_json(self.jobs_file, self.jobs)
+                    except OSError:
+                        job.pop("apagando")
+                        raise
+                try:
+                    folder = self._download_folder(job)
+                    if folder.exists():
+                        await asyncio.to_thread(shutil.rmtree, folder)
+                except OSError as error:
+                    raise RuntimeError("Não foi possível apagar a pasta. Tente novamente.") from error
+
+            remaining = {key: entry for key, entry in self.jobs.items() if key != job_id}
+            save_json(self.jobs_file, remaining)
+            self.jobs = remaining
 
     async def check_executable(self, job_id, selected):
         async with self.lock:
@@ -338,7 +525,10 @@ class Plugin:
             events = []
             try:
                 async with self.lock:
-                    pending = [job for job in self.jobs.values() if job["estado"] not in TERMINAL]
+                    pending = [
+                        job for job in self.jobs.values()
+                        if job["estado"] not in TERMINAL and not job.get("apagando")
+                    ]
                     if pending:
                         await self.aria.start()
                     for job in pending:

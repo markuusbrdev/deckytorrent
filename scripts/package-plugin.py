@@ -17,7 +17,7 @@ def main():
     args = parser.parse_args()
 
     version = json.loads((ROOT / "package.json").read_text())["version"]
-    output = args.output / f"decky-catalogo-v{version}.zip"
+    output = args.output / f"decky-torrent-v{version}.zip"
     files = {
         name: ROOT / name
         for name in (

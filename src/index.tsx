@@ -1,15 +1,16 @@
 import {
   addEventListener, callable, definePlugin, FileSelectionType, getExternalResourceURL,
-  openFilePicker, removeEventListener, toaster, useQuickAccessVisible,
+  openFilePicker, removeEventListener, routerHook, toaster, useQuickAccessVisible,
 } from "@decky/api";
 import {
-  ButtonItem, DropdownItem, Focusable, PanelSection, PanelSectionRow, staticClasses,
+  ConfirmModal, DialogButton, DropdownItem, Focusable, Navigation, showModal, staticClasses, TextField,
 } from "@decky/ui";
-import { useEffect, useRef, useState } from "react";
-import { FaBoxOpen } from "react-icons/fa";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { FaArrowLeft, FaBoxOpen, FaDownload, FaSearch, FaStore } from "react-icons/fa";
+import { styles } from "./styles";
 
 type Option = { id: string; nome: string };
-type Package = Option & { categoria: string; capa: string };
+type Package = Option & { categoria: string; capa: string; magnet: string };
 type Catalog = { categorias: Option[]; pacotes: Package[]; aviso: string };
 type Status = "active" | "waiting" | "paused" | "complete" | "error";
 type Download = Option & {
@@ -20,22 +21,34 @@ type Download = Option & {
   velocidade: number;
   erro: string | null;
   atalho: number | null;
+  temExecutavel: boolean;
+  apagando: boolean | null;
 };
 type Queue = { downloads: Download[]; aviso: string };
-type Tab = "loja" | "downloads";
 
+const storeRoute = "/decky-torrent/loja";
+const downloadsRoute = "/decky-torrent/downloads";
 const getCatalog = callable<[refresh: boolean], Catalog>("get_catalog");
+const getPackageSize = callable<[id: string], number | null>("get_package_size");
 const listDownloads = callable<[], Queue>("list_downloads");
+const homeFolder = callable<[], string>("home_folder");
 const enqueue = callable<[id: string, folder: string], string>("start_download");
+const deleteDownload = callable<[id: string, deleteFiles: boolean], void>("delete_download");
 const setPaused = callable<[id: string, pause: boolean], void>("set_paused");
 const checkExecutable = callable<[id: string, path: string], string>("check_executable");
 const saveShortcut = callable<[id: string, appId: number], void>("save_shortcut");
-
 const labels: Record<Status, string> = {
   active: "Baixando", waiting: "Aguardando", paused: "Pausado",
   complete: "Concluído", error: "Falha no download",
 };
 const format = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 });
+
+let catalogRefresh: Promise<Catalog> | undefined;
+
+function refreshCatalog() {
+  catalogRefresh ??= getCatalog(true).finally(() => { catalogRefresh = undefined; });
+  return catalogRefresh;
+}
 
 function size(bytes: number) {
   if (bytes >= 1024 ** 3) return `${format.format(bytes / 1024 ** 3)} GiB`;
@@ -44,81 +57,16 @@ function size(bytes: number) {
   return `${bytes} B`;
 }
 
-function PickerFilter({
-  label, options, selected, onChange,
-}: {
-  label: string; options: Option[]; selected: string; onChange: (value: string) => void;
-}) {
-  return (
-    <PanelSectionRow>
-      <DropdownItem
-        label={label}
-        selectedOption={selected}
-        rgOptions={options.map(({ id, nome }) => ({ data: id, label: nome }))}
-        onChange={({ data }) => onChange(data)}
-      />
-    </PanelSectionRow>
-  );
+function openPage(path: string) {
+  Navigation.Navigate(path);
+  Navigation.CloseSideMenus();
 }
 
-function Cover({ src }: { src: string }) {
-  const [failed, setFailed] = useState(false);
-  return (
-    <div style={{
-      width: 60, height: 45, flex: "0 0 60px", borderRadius: 4, overflow: "hidden",
-      display: "grid", placeItems: "center", background: "#263444", color: "#b7cede",
-    }}>
-      {src && !failed ? (
-        <img
-          src={src.startsWith("data:") ? src : getExternalResourceURL(src)}
-          alt="" width={60} height={45} loading="lazy"
-          style={{ objectFit: "cover" }} onError={() => setFailed(true)}
-        />
-      ) : <FaBoxOpen aria-hidden />}
-    </div>
-  );
-}
-
-function Content() {
-  const visible = useQuickAccessVisible();
-  const [home, setHome] = useState("/home/deck");
-  const [tab, setTab] = useState<Tab>("loja");
-  const [catalog, setCatalog] = useState<Catalog>();
-  const [catalogError, setCatalogError] = useState("");
+function useQueue(enabled: boolean) {
   const [queue, setQueue] = useState<Queue>();
-  const [queueError, setQueueError] = useState("");
-  const [category, setCategory] = useState("");
-  const [busy, setBusy] = useState(false);
-  const actionInFlight = useRef(false);
   const [error, setError] = useState("");
-  const [catalogLimit, setCatalogLimit] = useState(12);
-  const [queueLimit, setQueueLimit] = useState(12);
-  const [created, setCreated] = useState<Record<string, number>>({});
-  const currentCategory = catalog?.categorias.find(({ id }) => id === category);
-
   useEffect(() => {
-    callable<[], string>("home_folder")().then(setHome).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (!visible) return;
-    let current = true;
-    setCatalogError("");
-    void (async () => {
-      try {
-        const cached = await getCatalog(false);
-        if (current) setCatalog(cached);
-        const refreshed = await getCatalog(true);
-        if (current) setCatalog(refreshed);
-      } catch {
-        if (current) setCatalogError("Falha ao carregar a loja. Reabra o painel para tentar novamente.");
-      }
-    })();
-    return () => { current = false; };
-  }, [visible]);
-
-  useEffect(() => {
-    if (!visible || tab !== "downloads") return;
+    if (!enabled) return;
     let current = true;
     let timer: ReturnType<typeof setTimeout>;
     const refresh = async () => {
@@ -126,10 +74,10 @@ function Content() {
         const result = await listDownloads();
         if (current) {
           setQueue(result);
-          setQueueError("");
+          setError("");
         }
       } catch {
-        if (current) setQueueError("Falha ao consultar a fila. Tentando novamente…");
+        if (current) setError("Falha ao consultar a fila. Tentando novamente…");
       }
       if (current) timer = setTimeout(refresh, 1500);
     };
@@ -138,11 +86,18 @@ function Content() {
       current = false;
       clearTimeout(timer);
     };
-  }, [visible, tab]);
+  }, [enabled]);
+  return { queue, status: error || queue?.aviso || (!queue ? "Carregando downloads…" : "") };
+}
 
-  async function act(action: () => Promise<void>) {
-    if (actionInFlight.current) return;
-    actionInFlight.current = true;
+function useAction() {
+  const inFlight = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function run(action: () => Promise<void>) {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setError("");
     try {
@@ -152,21 +107,112 @@ function Content() {
         setError(failure instanceof Error ? failure.message : "Não foi possível concluir a ação.");
       }
     } finally {
-      actionInFlight.current = false;
+      inFlight.current = false;
       setBusy(false);
     }
   }
 
-  async function download(entry: Package) {
-    const { realpath } = await openFilePicker(FileSelectionType.FOLDER, home, false, true);
-    await enqueue(entry.id, realpath);
-    setTab("downloads");
-  }
+  return { run, busy, error };
+}
+
+function Cover({ src }: { src: string }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <div className="dt-cover">
+      {src && !failed ? (
+        <img
+          src={src.startsWith("data:") ? src : getExternalResourceURL(src)}
+          alt="" loading="lazy" onError={() => setFailed(true)}
+        />
+      ) : <FaBoxOpen aria-hidden />}
+    </div>
+  );
+}
+
+function CatalogCard({ entry, disabled, download }: {
+  entry: Package;
+  disabled: boolean;
+  download: () => void;
+}) {
+  const [bytes, setBytes] = useState<number | null>();
+  useEffect(() => {
+    let current = true;
+    void getPackageSize(entry.id).then(
+      (result) => { if (current) setBytes(result); },
+      () => { if (current) setBytes(null); },
+    );
+    return () => { current = false; };
+  }, [entry.id]);
+
+  return (
+    <DialogButton
+      className="dt-card"
+      noFocusRing
+      disabled={disabled}
+      onClick={download}
+    >
+      <Cover key={entry.capa} src={entry.capa} />
+      <span className="dt-card-copy">
+        <span className="dt-sr-only">Baixar </span>
+        <strong>{entry.nome}</strong>
+        <span className="dt-card-size">
+          {bytes === undefined ? "Consultando tamanho…" : bytes === null ? "Tamanho indisponível" : size(bytes)}
+        </span>
+      </span>
+    </DialogButton>
+  );
+}
+
+function Page({ title, children, toolbar }: { title: string; children: ReactNode; toolbar?: ReactNode }) {
+  return (
+    <Focusable className="dt-page">
+      <style>{styles}</style>
+      <main className="dt-page-inner" aria-label={title}>
+        <Focusable className="dt-header" flow-children="right">
+          <div>
+            <DialogButton className="dt-back" onClick={() => Navigation.NavigateBack()}>
+              <span className="dt-button-content"><FaArrowLeft aria-hidden /> Voltar</span>
+            </DialogButton>
+            <h1>{title}</h1>
+          </div>
+          {toolbar}
+        </Focusable>
+        {children}
+      </main>
+    </Focusable>
+  );
+}
+
+function PluginTitle() {
+  return (
+    <Focusable className={`${staticClasses.Title} dt-plugin-title`} flow-children="right">
+      <style>{styles}</style>
+      <span className="dt-plugin-name">Decky Torrent</span>
+      <DialogButton className="dt-nav-button" onClick={() => openPage(storeRoute)} onOKActionDescription="Loja">
+        <FaStore aria-hidden />
+        <span className="dt-sr-only">Loja</span>
+      </DialogButton>
+      <DialogButton className="dt-nav-button" onClick={() => openPage(downloadsRoute)} onOKActionDescription="Downloads">
+        <FaDownload aria-hidden />
+        <span className="dt-sr-only">Downloads</span>
+      </DialogButton>
+    </Focusable>
+  );
+}
+
+function Home() {
+  const visible = useQuickAccessVisible();
+  const { queue, status } = useQueue(visible);
+  const action = useAction();
+  const [created, setCreated] = useState<Record<string, number>>({});
+  const [limit, setLimit] = useState(12);
+
+  useEffect(() => {
+    if (visible) void refreshCatalog().catch(() => {});
+  }, [visible]);
 
   async function shortcut(job: Download) {
-    const { realpath } = await openFilePicker(
-      FileSelectionType.FILE, job.pasta, true, true, undefined, ["exe"],
-    );
+    const { realpath } = await openFilePicker(FileSelectionType.FILE, job.pasta, true, true, undefined, ["exe"]);
     const target = await checkExecutable(job.id, realpath);
     const appId = await SteamClient.Apps.AddShortcut(job.nome, target, "", "");
     if (!appId) throw new Error("A Steam não conseguiu criar o atalho.");
@@ -176,127 +222,256 @@ function Content() {
     toaster.toast({ title: "Adicionado à Steam", body: job.nome });
   }
 
-  const packages = catalog?.pacotes.filter((entry) =>
-    !currentCategory || entry.categoria === currentCategory.id,
-  ) ?? [];
+  const ready = queue?.downloads.filter((job) =>
+    job.estado === "complete" && job.temExecutavel && !job.atalho && !created[job.id],
+  );
 
   return (
-    <>
-      <PanelSection>
-        <PanelSectionRow>
-          <Focusable style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: 8 }}>
-            <ButtonItem layout="below" bottomSeparator="none" disabled={tab === "loja"}
-              onClick={() => { setError(""); setTab("loja"); }}>Loja</ButtonItem>
-            <ButtonItem layout="below" bottomSeparator="none" disabled={tab === "downloads"}
-              onClick={() => { setError(""); setTab("downloads"); }}>Meus downloads</ButtonItem>
-          </Focusable>
-        </PanelSectionRow>
-        {error && <p role="alert" style={{ overflowWrap: "anywhere" }}>{error}</p>}
-      </PanelSection>
-
-      {tab === "loja" ? (
-        <PanelSection>
-          <div role="status">{catalogError || catalog?.aviso || (!catalog && "Carregando a loja…")}</div>
-          {catalog && (
-            <>
-              <PickerFilter
-                label="Categoria"
-                options={[{ id: "", nome: "Todas" }, ...catalog.categorias]}
-                selected={currentCategory?.id ?? ""}
-                onChange={(value) => { setCategory(value); setCatalogLimit(12); }}
-              />
-              {packages.length === 0 && <p>Nenhum pacote disponível nesta seleção.</p>}
-              {packages.slice(0, catalogLimit).map((entry) => {
-                const group = catalog.categorias.find(({ id }) => id === entry.categoria);
-                return (
-                  <PanelSectionRow key={entry.id}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, paddingBlock: 8 }}>
-                      <Cover key={entry.capa} src={entry.capa} />
-                      <div style={{ minWidth: 0, overflowWrap: "anywhere" }}>
-                        <strong>{entry.nome}</strong>
-                        <div style={{ fontSize: 12, color: "#b7cede" }}>
-                          {group?.nome}
-                        </div>
-                      </div>
-                    </div>
-                    <ButtonItem layout="below" disabled={busy} onClick={() => act(() => download(entry))}>
-                      Baixar
-                    </ButtonItem>
-                  </PanelSectionRow>
-                );
-              })}
-              {packages.length > catalogLimit && (
-                <PanelSectionRow>
-                  <ButtonItem layout="below" onClick={() => setCatalogLimit((limit) => limit + 12)}>
-                    Mostrar mais pacotes
-                  </ButtonItem>
-                </PanelSectionRow>
-              )}
-            </>
-          )}
-        </PanelSection>
-      ) : (
-        <PanelSection>
-          <div role="status">{queueError || queue?.aviso || (!queue && "Carregando downloads…")}</div>
-          {queue?.downloads.length === 0 && <p>Escolha um pacote na Loja para começar.</p>}
-          {queue?.downloads.slice(0, queueLimit).map((job) => (
-            <PanelSectionRow key={job.id}>
-              <div style={{ paddingBlock: 10, overflowWrap: "anywhere" }}>
-                <strong>{job.nome}</strong>
-                <div>{labels[job.estado]}</div>
-                {job.total > 0 && (
-                  <>
-                    <progress
-                      aria-label={`Progresso de ${job.nome}`} value={job.baixado} max={job.total}
-                      style={{ width: "100%", height: 6, accentColor: "#77c9ef" }}
-                    />
-                    <div style={{ fontSize: 12, color: "#b7cede", fontVariantNumeric: "tabular-nums" }}>
-                      {size(job.baixado)} / {size(job.total)}
-                      {job.estado === "active" && ` · ${size(job.velocidade)}/s`}
-                    </div>
-                  </>
-                )}
-                {job.estado === "active" && !job.total && <div>Buscando metadados do torrent…</div>}
-                {job.erro && <div>{job.erro}</div>}
-              </div>
-              {job.estado === "complete" ? (
-                <ButtonItem
-                  layout="below" disabled={busy || Boolean(job.atalho || created[job.id])}
-                  onClick={() => act(() => shortcut(job))}
-                >
-                  {job.atalho || created[job.id] ? "Adicionado à Steam" : "Adicionar à Steam"}
-                </ButtonItem>
-              ) : job.estado !== "error" && (
-                <ButtonItem layout="below" disabled={busy}
-                  onClick={() => act(() => setPaused(job.id, job.estado !== "paused"))}>
-                  {job.estado === "paused" ? "Continuar" : "Pausar"}
-                </ButtonItem>
-              )}
-            </PanelSectionRow>
-          ))}
-          {queue && queue.downloads.length > queueLimit && (
-            <PanelSectionRow>
-              <ButtonItem layout="below" onClick={() => setQueueLimit((limit) => limit + 12)}>
-                Mostrar mais downloads
-              </ButtonItem>
-            </PanelSectionRow>
-          )}
-        </PanelSection>
+    <Focusable className="dt-home">
+      <h2>Prontos para adicionar</h2>
+      {status && <p className="dt-status" role="status">{status}</p>}
+      {action.error && <p className="dt-error" role="alert">{action.error}</p>}
+      {ready?.length === 0 && <p className="dt-muted">Os downloads concluídos com um .exe aparecem aqui.</p>}
+      {ready?.slice(0, limit).map((job) => (
+        <Focusable key={job.id} className="dt-ready">
+          <strong>{job.nome}</strong>
+          <div className="dt-ready-meta">
+            <div>Tamanho total · {size(job.total)}</div>
+            <div className="dt-path">{job.pasta}</div>
+          </div>
+          <DialogButton disabled={action.busy} onClick={() => action.run(() => shortcut(job))}>
+            Adicionar à Steam
+          </DialogButton>
+        </Focusable>
+      ))}
+      {ready && ready.length > limit && (
+        <DialogButton onClick={() => setLimit((previous) => previous + 12)}>Mostrar mais</DialogButton>
       )}
-    </>
+    </Focusable>
+  );
+}
+
+function searchText(value: string) {
+  return value.normalize("NFD").replace(/\p{Diacritic}/gu, "").trim().toLocaleLowerCase("pt-BR");
+}
+
+function StorePage() {
+  const [catalog, setCatalog] = useState<Catalog>();
+  const [error, setError] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("");
+  const [limit, setLimit] = useState(12);
+  const action = useAction();
+
+  useEffect(() => {
+    let current = true;
+    void (async () => {
+      try {
+        const cached = await getCatalog(false);
+        if (current) setCatalog(cached);
+      } catch {
+        if (current) setError("Falha ao carregar o catálogo salvo.");
+      }
+      try {
+        const refreshed = await refreshCatalog();
+        if (current) {
+          setCatalog(refreshed);
+          setError("");
+        }
+      } catch {
+        if (current) setError("Falha ao atualizar a Loja. Reabra esta tela para tentar novamente.");
+      }
+    })();
+    return () => { current = false; };
+  }, []);
+
+  async function download(entry: Package) {
+    const home = await homeFolder().catch(() => "/home/deck");
+    const { realpath } = await openFilePicker(FileSelectionType.FOLDER, home, false, true);
+    await enqueue(entry.id, realpath);
+    openPage(downloadsRoute);
+  }
+
+  const selected = catalog?.categorias.some(({ id }) => id === category) ? category : "";
+  const term = searchText(query);
+  const packages = catalog?.pacotes.filter((entry) =>
+    (!selected || entry.categoria === selected) && (!term || searchText(entry.nome).includes(term)),
+  );
+  const status = error || catalog?.aviso || (!catalog ? "Carregando a Loja…" : "");
+
+  return (
+    <Page
+      title="Loja"
+      toolbar={catalog && (
+        <Focusable className="dt-store-tools" flow-children="right">
+          <DialogButton
+            className="dt-search-toggle"
+            onClick={() => {
+              setSearchOpen(!searchOpen);
+              if (searchOpen) setQuery("");
+              setLimit(12);
+            }}
+          >
+            <span className="dt-button-content">
+              <FaSearch aria-hidden /> {searchOpen ? "Fechar pesquisa" : "Pesquisar"}
+            </span>
+          </DialogButton>
+          <div className="dt-filter">
+            <DropdownItem
+              label="Categoria"
+              selectedOption={selected}
+              rgOptions={[{ data: "", label: "Todas" }, ...catalog.categorias.map(({ id, nome }) => ({ data: id, label: nome }))]}
+              onChange={({ data }) => { setCategory(data); setLimit(12); }}
+            />
+          </div>
+        </Focusable>
+      )}
+    >
+      {searchOpen && (
+        <div className="dt-search">
+          <TextField
+            label="Pesquisar por título"
+            value={query}
+            focusOnMount
+            bShowClearAction
+            onChange={(event) => {
+              setQuery(event.currentTarget.value);
+              setLimit(12);
+            }}
+          />
+        </div>
+      )}
+      <p className="dt-status" role="status">{status}</p>
+      {action.error && <p className="dt-error" role="alert">{action.error}</p>}
+      {packages?.length === 0 && (
+        <p className="dt-empty" role="status">
+          {term ? "Nenhum título encontrado." : selected ? "Nenhum pacote nesta categoria." : "Nenhum pacote disponível na Loja."}
+        </p>
+      )}
+      {packages && packages.length > 0 && (
+        <Focusable className="dt-grid">
+          {packages.slice(0, limit).map((entry) => (
+            <CatalogCard
+              key={`${entry.id}:${entry.magnet}`}
+              entry={entry}
+              disabled={action.busy}
+              download={() => action.run(() => download(entry))}
+            />
+          ))}
+        </Focusable>
+      )}
+      {packages && packages.length > limit && (
+        <DialogButton className="dt-more" onClick={() => setLimit((previous) => previous + 12)}>
+          Mostrar mais pacotes
+        </DialogButton>
+      )}
+    </Page>
+  );
+}
+
+function DownloadsPage() {
+  const { queue, status } = useQueue(true);
+  const action = useAction();
+  const [limit, setLimit] = useState(12);
+
+  function confirmDelete(job: Download) {
+    const deleteFiles = job.estado !== "complete";
+    const modal = showModal(
+      <ConfirmModal
+        strTitle={`Apagar ${job.nome}?`}
+        strOKButtonText="Apagar"
+        strCancelButtonText="Cancelar"
+        bDestructiveWarning={deleteFiles}
+        onCancel={() => modal.Close()}
+        onOK={() => {
+          modal.Close();
+          void action.run(async () => {
+            await deleteDownload(job.id, deleteFiles);
+            toaster.toast({ title: "Download removido", body: job.nome });
+          });
+        }}
+      >
+        {deleteFiles ? (
+          <div>
+            A transferência será cancelada e a pasta abaixo, incluindo os arquivos já baixados, será excluída.
+            <div className="dt-delete-path">{job.pasta}</div>
+          </div>
+        ) : "O download será removido da lista. Os arquivos e qualquer atalho na Steam serão mantidos."}
+      </ConfirmModal>,
+    );
+  }
+
+  return (
+    <Page title="Downloads">
+      <p className="dt-status" role="status">{status}</p>
+      {action.error && <p className="dt-error" role="alert">{action.error}</p>}
+      {queue?.downloads.length === 0 && <p className="dt-empty">Escolha um pacote na Loja para começar.</p>}
+      <Focusable className="dt-transfers">
+        {queue?.downloads.slice(0, limit).map((job) => (
+          <Focusable key={job.id} className="dt-transfer" flow-children="right">
+            <div className="dt-transfer-body">
+              <div className="dt-transfer-heading">
+                <strong>{job.nome}</strong>
+                <span className="dt-state">
+                  {job.apagando ? "Exclusão pendente" : job.atalho ? "Adicionado à Steam" : labels[job.estado]}
+                </span>
+              </div>
+              {job.total > 0 && (
+                <>
+                  <progress aria-label={`Progresso de ${job.nome}`} value={job.baixado} max={job.total} />
+                  <div className="dt-transfer-meta">
+                    <span>{size(job.baixado)} / {size(job.total)}</span>
+                    {job.estado === "active" && <span>{size(job.velocidade)}/s</span>}
+                  </div>
+                </>
+              )}
+              {job.estado === "active" && !job.total && <div className="dt-muted">Buscando metadados do torrent…</div>}
+              {job.estado === "complete" && job.temExecutavel && !job.atalho && (
+                <div className="dt-muted">Pronto para adicionar à Steam pelo painel do Decky Torrent.</div>
+              )}
+              {job.erro && <div className="dt-error">{job.erro}</div>}
+            </div>
+            <Focusable className="dt-transfer-actions" flow-children="right">
+              {job.estado !== "complete" && job.estado !== "error" && !job.apagando && (
+                <DialogButton className="dt-transfer-action" disabled={action.busy}
+                  onClick={() => action.run(() => setPaused(job.id, job.estado !== "paused"))}>
+                  {job.estado === "paused" ? "Continuar" : "Pausar"}
+                </DialogButton>
+              )}
+              <DialogButton className="dt-transfer-action dt-delete" disabled={action.busy}
+                onClick={() => confirmDelete(job)}>
+                Apagar
+              </DialogButton>
+            </Focusable>
+          </Focusable>
+        ))}
+      </Focusable>
+      {queue && queue.downloads.length > limit && (
+        <DialogButton className="dt-more" onClick={() => setLimit((previous) => previous + 12)}>
+          Mostrar mais downloads
+        </DialogButton>
+      )}
+    </Page>
   );
 }
 
 export default definePlugin(() => {
+  routerHook.addRoute(storeRoute, StorePage);
+  routerHook.addRoute(downloadsRoute, DownloadsPage);
   const listener = addEventListener<[string]>("download_concluido", (name) =>
     toaster.toast({ title: "Download concluído", body: name }),
   );
   return {
-    name: "Catálogo Decky",
-    titleView: <div className={staticClasses.Title}>Catálogo Decky</div>,
-    content: <Content />,
-    icon: <FaBoxOpen />,
+    name: "Decky Torrent",
+    titleView: <PluginTitle />,
+    content: <Home />,
+    icon: <FaStore />,
     alwaysRender: true,
-    onDismount: () => removeEventListener("download_concluido", listener),
+    onDismount() {
+      removeEventListener("download_concluido", listener);
+      routerHook.removeRoute(storeRoute);
+      routerHook.removeRoute(downloadsRoute);
+    },
   };
 });

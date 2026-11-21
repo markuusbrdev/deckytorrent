@@ -1,6 +1,6 @@
 {
-  "name": "decky-catalogo",
-  "version": "0.1.0",
+  "name": "decky-torrent",
+  "version": "0.2.6",
   "private": true,
   "type": "module",
   "scripts": {

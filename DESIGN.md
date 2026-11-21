@@ -1,10 +1,8 @@
-# Catálogo Decky
+# Decky Torrent
 
-Painel lateral de operação em português brasileiro para quem navega pelo Modo Jogo com controle ou toque. A Loja usa capas pequenas ao lado da identificação do pacote, como na biblioteca, e Meus downloads prioriza o estado e a barra de progresso.
+Painel lateral de operação em português brasileiro para o Steam Deck. O painel inicial privilegia o último passo, com ícones independentes de Loja e Downloads no cabeçalho e cartões compactos para cada download pronto para adicionar à biblioteca. A pasta e o tamanho ficam em texto secundário abaixo do título.
 
-A tipografia, o fundo do painel, a rolagem, o foco, as linhas e os botões vêm dos componentes do Decky e da Steam. A interface ocupa uma coluna, com duas abas lado a lado e ações de largura total por item. As capas reservam 60 × 45 px, inclusive quando falham. O fundo da capa usa `#263444`, detalhes de leitura usam `#b7cede` e o progresso usa `#77c9ef`. Esses valores são aplicados em `src/index.tsx`.
-
-O painel usa os pop-ups do Decky para os filtros e seletores de arquivos e o sistema de notificações do Decky para conclusão. A fila continua visível com o último estado conhecido se a consulta falhar.
+A Loja e Downloads abrem como telas do Modo Jogo. A Loja usa capas em proporção 4:5 numa grade, com título e tamanho abaixo, sem moldura externa. Cada capa é um único alvo de foco, indicado pelo brilho da arte e pelo título sublinhado. Downloads usa linhas de transferência e uma barra em ciano (`#86d5f4`). As telas usam fundo `#101922`, cartões `#22303e` e texto secundário `#b9c9d8`. Os estilos ficam em `src/styles.ts`. A navegação, os botões, o seletor de categoria, o seletor de arquivos e as notificações usam os componentes do Decky e da Steam.
 
 ## Editor de catálogo no navegador
 

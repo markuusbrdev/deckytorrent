@@ -1,14 +1,16 @@
-# Interações do Catálogo Decky
+# Interações do Decky Torrent
 
 | Capacidade | Componente | Comportamento |
 | --- | --- | --- |
-| Abas e ações | Decky ButtonItem e Focusable | A aba ativa aparece selecionada e os comandos usam o foco do Modo Jogo. |
-| Select/Listbox | Decky DropdownItem | O filtro de categoria usa o menu do Game Mode. |
-| Pasta e executável | Decky openFilePicker | Cancelar retorna ao painel. O backend valida pasta e executável. |
-| Toast | Decky toaster | A conclusão também fica registrada em Meus downloads. |
-| Rolagem | Painel de acesso rápido da Steam | As listas carregam doze itens de cada vez com Mostrar mais. |
+| Navegação | Decky DialogButton, Focusable e routerHook | Loja e Downloads fecham o painel lateral e abrem uma rota em tela cheia. Voltar usa o histórico da Steam. |
+| Select/Listbox | Decky DropdownItem | O filtro de categoria usa o menu do Modo Jogo. |
+| Pesquisa | Decky TextField | A busca local por título ignora acentos e combina com o filtro de categoria. |
+| Pasta e executável | Decky openFilePicker | Cancelar retorna à tela anterior. O backend valida pasta e executável. |
+| Toast | Decky toaster | A conclusão também fica registrada em Downloads. |
+| Exclusão | Decky ConfirmModal | Downloads incompletos têm a subpasta removida após confirmação. Downloads concluídos saem da lista e mantêm arquivos e atalhos. |
+| Rolagem | Painel da Steam e tela de cada rota | As listas carregam doze itens de cada vez com Mostrar mais. |
 
-A Loja apresenta o catálogo local ou a última atualização válida enquanto busca a versão remota ao abrir. A fila é persistida pelo backend, que também controla o processo aria2. A Steam recebe o atalho após seleção explícita de um executável do pacote.
+O painel inicial mostra downloads com .exe disponível que ainda não viraram atalhos. A Loja apresenta o catálogo local ou a última atualização válida enquanto busca a versão remota. Downloads exibe o progresso atual e retém o último estado conhecido em falhas de consulta. A fila é persistida pelo backend, que também controla o processo aria2.
 
 ## Editor local
 
