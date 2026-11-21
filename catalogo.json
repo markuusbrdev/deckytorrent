@@ -23,6 +23,13 @@
       "magnet": "magnet:?xt=urn:btih:3972367c3e234d58881152ce259f5c1d1d587694&dn=Forza.Horizon.6.Premium.Edition-InsaneRamZes&tr=http%3A%2F%2Fbt3.t-ru.org%2Fann%3Fpk%3",
       "categoria": "jogos",
       "imagem": "imagens/forza-horizon-6.jpg"
+    },
+    {
+      "id": "hollow-knight-silksong-linux",
+      "nome": "Hollow Knight: Silksong (LINUX)",
+      "magnet": "magnet:?xt=urn:btih:059d50eeae1f6ed546ec95748849ae52c3e0cf7a&dn=Hollow+Knight+Silksong&tr=http%3A%2F%2Fbt4.t-ru.org%2Fann%3Fpk%3De325e7a94cd8e7a73e5696b21b6c448a&tr=http%3A%2F%2Fretracker.local%2Fannounce",
+      "categoria": "jogos",
+      "imagem": "imagens/hollow-knight-silksong-linux.jpg"
     }
   ]
 }
