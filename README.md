@@ -1,14 +1,36 @@
-# Decky Torrent
+<h1><img src="assets/decky-torrent-logo.png" alt="Decky Torrent" width="600"></h1>
 
-Plugin experimental para o Steam Deck. A Loja lista pacotes BitTorrent por categoria e permite pesquisar pelo título. Downloads acompanha as transferências em tela cheia e permite pausar e continuar. O painel inicial reúne os pacotes concluídos com um executável Windows para adicionar à biblioteca.
+**Catálogo BitTorrent, downloads e atalhos da Steam no Modo Jogo.**
+
+O Decky Torrent é um plugin experimental para o Decky Loader. Você pode escolher uma loja da comunidade ou publicar seu próprio catálogo no GitHub.
+
+[Baixar no GitHub Releases](https://github.com/markuusbrdev/deckytorrent/releases) · [Instalação](#instalar-pelo-decky) · [Catálogo próprio](#criar-seu-próprio-catálogo) · [Compilar](#gerar-o-zip-localmente)
+
+## O que você pode fazer
+
+| Área | Recursos |
+| --- | --- |
+| **Loja** | Navegue pelas capas em tela cheia, pesquise pelo título e filtre por categoria. Os cadastros mais recentes aparecem primeiro, e mais capas entram na tela conforme você rola. |
+| **Downloads** | Acompanhe o progresso, pause, retome ou apague transferências. Os downloads continuam enquanto o Steam Deck estiver acordado, mesmo com a Loja fechada. |
+| **Biblioteca** | Escolha um `.exe` de um pacote concluído e crie um atalho na Steam. |
+| **Catálogos da comunidade** | Troque a fonte da Loja pelo endereço de um repositório público do GitHub. O editor ajuda a cadastrar pacotes e capas no seu próprio catálogo. |
+
+## Instalar pelo Decky
+
+1. Em [GitHub Releases](https://github.com/markuusbrdev/deckytorrent/releases), baixe o arquivo `decky-torrent-vX.Y.Z.zip` em **Assets**.
+2. No Modo Jogo, abra as configurações do Decky e habilite o modo de desenvolvedor.
+3. Abra **Desenvolvedor → Instalar plugin de arquivo ZIP** e selecione o ZIP inteiro, sem extrair.
+4. Abra **Decky Torrent → Loja**, selecione uma capa e escolha uma pasta de destino.
+
+O instalador inclui o `aria2c` para Linux x86-64. Se estiver migrando da versão **Catálogo Decky**, reinicie o Steam Deck após instalar para carregar o novo nome. A pasta interna foi preservada para manter a fila existente.
 
 ## Trocar de loja
 
-Disponível a partir da **v0.2.7**. No Modo Jogo, abra **Decky Torrent → Loja → Trocar de loja**. O campo mostra o repositório em uso. Cole a URL de um repositório público, como `https://github.com/seu-usuario/minha-loja`, e clique em **Salvar loja**.
+No Modo Jogo, abra **Decky Torrent → Loja → Trocar de loja**. O campo mostra o repositório em uso. Cole a URL de um repositório público, como `https://github.com/seu-usuario/minha-loja`, e clique em **Salvar loja**.
 
-O plugin procura `catalogo.json` na raiz da branch padrão do repositório e lê as capas pelos caminhos do campo `imagem`. Se o catálogo estiver ausente ou inválido, a loja anterior continua ativa. A escolha fica salva no Steam Deck e os downloads existentes permanecem na fila. Para voltar ao catálogo original, selecione **Usar loja padrão**.
+A loja padrão usa o catálogo deste projeto. Ao trocar de loja, o plugin procura `catalogo.json` na raiz da branch padrão do repositório e lê as capas pelos caminhos do campo `imagem`. Se o catálogo estiver ausente ou inválido, a loja anterior continua ativa. A escolha fica salva no Steam Deck e os downloads existentes permanecem na fila. Para voltar ao catálogo original, selecione **Usar loja padrão**.
 
-O plugin consulta o catálogo remoto ao abrir a **Loja**. Use o ícone **Atualizar catálogo** para buscar novamente sem sair da tela. Se o GitHub estiver indisponível, a Loja usa a última versão válida salva. As capas remotas dependem da rede e exibem um ícone quando indisponíveis. A Loja também tenta descobrir o tamanho pelos metadados dos magnets exibidos e guarda o resultado após uma consulta bem-sucedida.
+O plugin consulta o catálogo remoto ao abrir a **Loja**. Sempre que o GitHub informa o commit atual da branch, o plugin carrega o JSON e as capas desse mesmo commit. Use o ícone **Atualizar catálogo** para buscar novamente sem sair da tela. Se o GitHub estiver indisponível, a Loja usa a última versão válida salva. Na primeira abertura da loja padrão sem cache, o plugin usa o catálogo incluído no ZIP. A Loja mostra um ícone quando uma capa remota está indisponível. A Loja também tenta descobrir o tamanho pelos metadados dos magnets exibidos e guarda o resultado após uma consulta bem-sucedida.
 
 Quando há uma versão estável mais recente com instalador ZIP no GitHub do Decky Torrent, a Loja mostra um aviso com **Ver release**. A consulta sempre usa o repositório oficial do plugin, inclusive ao usar um catálogo de outra comunidade. O botão abre a página da versão para você decidir quando baixar e instalar.
 
@@ -71,9 +93,11 @@ Abra [`editor/index.html`](editor/index.html) pelo gerenciador de arquivos. O ca
 
 No Chrome ou Edge, use **Vincular pasta do projeto** para autorizar a gravação direta. **Salvar pacote** atualiza o JSON, grava a capa e atualiza a cópia usada na próxima abertura. O editor reutiliza a autorização se o navegador a mantiver. Se editar o JSON fora do editor, rode `python3 scripts/publicar-catalogo.py --sync-editor` para atualizar a cópia sem publicar no Git.
 
+Selecione um arquivo `.torrent` BitTorrent v1 ou híbrido para preencher automaticamente o campo **Link magnet**. A conversão é local, sem upload. O catálogo guarda o magnet e os trackers extraídos do arquivo.
+
 Nos dois modos, ao digitar um título, o editor sugere capas da Steam quando encontra o jogo. Selecione uma sugestão e salve o pacote para copiar a capa para `imagens/`. A busca usa o App ID do Wikidata, consulta os metadados no SteamCMD API e carrega a imagem do CDN da Steam. Ela precisa de internet. Você também pode enviar uma capa manualmente.
 
-Sem uma pasta vinculada, **Salvar pacote** guarda o catálogo e as novas capas neste navegador, inclusive ao atualizar ou reabrir a página. Use **Exportar ZIP** para levar as alterações aos arquivos do projeto. Extraia o ZIP na raiz do repositório e mantenha as capas existentes que você não carregou no editor. **Importar catálogo** continua disponível para abrir um arquivo de outro projeto.
+Ao abrir o HTML diretamente, sem vincular a pasta, **Salvar pacote** guarda o catálogo e as novas capas no navegador, inclusive ao atualizar ou reabrir a página. Use **Exportar ZIP** para levar as alterações aos arquivos do projeto. Extraia o ZIP na raiz do repositório e mantenha as capas existentes que você não carregou no editor. **Importar catálogo** continua disponível para abrir um arquivo de outro projeto.
 
 ### Publicar automaticamente ao salvar
 
@@ -83,13 +107,7 @@ No Linux ou SteamOS, copie [`scripts/publicar-catalogo.py`](scripts/publicar-cat
 python3 scripts/publicar-catalogo.py
 ```
 
-Vincule essa mesma pasta no editor. Enquanto o monitor estiver aberto, ele faz commit e push do catálogo, das capas referenciadas e da cópia do editor, quando presente, ao salvar. O terminal mostra o resultado. Use `Ctrl+C` para parar ou execute `python3 scripts/publicar-catalogo.py --once` para publicar alterações já gravadas.
-
-## Instalar pelo Decky
-
-Copie `decky-torrent-v0.2.10.zip` para o Steam Deck. Nas configurações do Decky, habilite o modo de desenvolvedor e abra **Desenvolvedor → Instalar plugin de arquivo ZIP**. Selecione o ZIP inteiro. O pacote de instalação inclui o `aria2c` para Linux x86-64. Se estiver vindo da versão Catálogo Decky, reinicie o Steam Deck após instalar para que o Decky recarregue o plugin com o novo nome. O instalador mantém a pasta interna da versão anterior.
-
-A loja padrão consulta o `catalogo.json` da branch `main` de [markuusbrdev/deckytorrent](https://github.com/markuusbrdev/deckytorrent). Na primeira abertura sem acesso ao GitHub, o plugin usa o catálogo incluído no ZIP.
+Abra o editor pelo atalho local ou vincule a mesma pasta no navegador. Enquanto o monitor estiver aberto, ele faz commit e push do catálogo, das capas referenciadas e da cópia do editor, quando presente, ao salvar. O terminal mostra o resultado. Use `Ctrl+C` para parar ou execute `python3 scripts/publicar-catalogo.py --once` para publicar alterações já gravadas.
 
 ## Gerar o ZIP localmente
 
@@ -102,7 +120,7 @@ python3 scripts/package-plugin.py --aria2 /caminho/para/aria2c --aria2-source /c
 
 Forneça um `aria2c` x86-64 portátil e o pacote de fontes correspondente. O instalador é gerado em `release/`.
 
-## Testar no Steam Deck
+## Fluxo de downloads
 
 1. Abra **Loja**, escolha uma categoria e selecione a capa do pacote. Escolha uma pasta. O plugin cria uma subpasta exclusiva para o pacote.
 2. Abra **Downloads**, pause, continue e feche o painel. Ao reabrir, confira o progresso. O backend guarda a fila e o aria2 preserva os dados parciais para retomada.
@@ -112,3 +130,7 @@ Forneça um `aria2c` x86-64 portátil e o pacote de fontes correspondente. O ins
 A fila do plugin funciona em segundo plano enquanto o Deck está acordado. Reiniciar o backend interrompe a transferência até que ele recarregue o estado. A API de atalhos pertence ao cliente Steam e deve ser validada na versão do SteamOS usada no teste.
 
 Na tela **Downloads**, **Apagar** pede confirmação. Para downloads incompletos, a confirmação cancela a transferência e exclui a subpasta do pacote. Para concluídos, a confirmação remove a entrada da fila e mantém os arquivos e atalhos.
+
+## Licença
+
+Consulte a [licença do projeto](LICENSE).
