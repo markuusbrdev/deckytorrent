@@ -2,18 +2,25 @@
 
 **Catálogo BitTorrent, downloads e atalhos da Steam no Modo Jogo.**
 
-O Decky Torrent é um plugin experimental para o Decky Loader. Você pode escolher uma loja da comunidade ou publicar seu próprio catálogo no GitHub.
+O Decky Torrent é um plugin experimental para o Decky Loader em dispositivos Linux x86-64 com o Modo Jogo da Steam. Você pode escolher uma loja da comunidade ou publicar seu próprio catálogo no GitHub.
 
-[Baixar no GitHub Releases](https://github.com/markuusbrdev/deckytorrent/releases) · [Instalação](#instalar-pelo-decky) · [Catálogo próprio](#criar-seu-próprio-catálogo) · [Compilar](#gerar-o-zip-localmente)
+[Baixar no GitHub Releases](https://github.com/markuusbrdev/deckytorrent/releases) · [Compatibilidade](#compatibilidade) · [Instalação](#instalar-pelo-decky) · [Catálogo próprio](#criar-seu-próprio-catálogo) · [Compilar](#gerar-o-zip-localmente)
 
 ## O que você pode fazer
 
 | Área | Recursos |
 | --- | --- |
 | **Loja** | Navegue pelas capas em tela cheia, pesquise pelo título e filtre por categoria. Os cadastros mais recentes aparecem primeiro, e mais capas entram na tela conforme você rola. |
-| **Downloads** | Acompanhe o progresso, pause, retome ou apague transferências. Os downloads continuam enquanto o Steam Deck estiver acordado, mesmo com a Loja fechada. |
+| **Downloads** | Acompanhe o progresso, pause, retome ou apague transferências. Os downloads continuam enquanto o dispositivo estiver acordado, mesmo com a Loja fechada. |
 | **Biblioteca** | Escolha um `.exe` de um pacote concluído e crie um atalho na Steam. |
 | **Catálogos da comunidade** | Troque a fonte da Loja pelo endereço de um repositório público do GitHub. O editor ajuda a cadastrar pacotes e capas no seu próprio catálogo. |
+
+## Compatibilidade
+
+Você precisa do [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) funcionando no **Modo Jogo da Steam** em um sistema **Linux x86-64**. Isso inclui os seguintes ambientes:
+
+- **Steam Deck e Steam Machine** com [SteamOS](https://store.steampowered.com/steamos).
+- **PCs de mesa e portáteis** com SteamOS ou distribuições que oferecem o Modo Jogo, como [CachyOS Handheld Edition](https://wiki.cachyos.org/installation/installation_handheld/) e [Bazzite Deck](https://docs.bazzite.gg/Handheld_and_HTPC_edition/Steam_Gaming_Mode/).
 
 ## Instalar pelo Decky
 
@@ -22,13 +29,13 @@ O Decky Torrent é um plugin experimental para o Decky Loader. Você pode escolh
 3. Abra **Desenvolvedor → Instalar plugin de arquivo ZIP** e selecione o ZIP inteiro, sem extrair.
 4. Abra **Decky Torrent → Loja**, selecione uma capa e escolha uma pasta de destino.
 
-O instalador inclui o `aria2c` para Linux x86-64. Se estiver migrando da versão **Catálogo Decky**, reinicie o Steam Deck após instalar para carregar o novo nome. A pasta interna foi preservada para manter a fila existente.
+O instalador inclui o `aria2c` para Linux x86-64. Se estiver migrando da versão **Catálogo Decky**, reinicie o dispositivo após instalar para carregar o novo nome. A pasta interna foi preservada para manter a fila existente.
 
 ## Trocar de loja
 
 No Modo Jogo, abra **Decky Torrent → Loja → Trocar de loja**. O campo mostra o repositório em uso. Cole a URL de um repositório público, como `https://github.com/seu-usuario/minha-loja`, e clique em **Salvar loja**.
 
-A loja padrão usa o catálogo deste projeto. Ao trocar de loja, o plugin procura `catalogo.json` na raiz da branch padrão do repositório e lê as capas pelos caminhos do campo `imagem`. Se o catálogo estiver ausente ou inválido, a loja anterior continua ativa. A escolha fica salva no Steam Deck e os downloads existentes permanecem na fila. Para voltar ao catálogo original, selecione **Usar loja padrão**.
+A loja padrão usa o catálogo deste projeto. Ao trocar de loja, o plugin procura `catalogo.json` na raiz da branch padrão do repositório e lê as capas pelos caminhos do campo `imagem`. Se o catálogo estiver ausente ou inválido, a loja anterior continua ativa. A escolha fica salva no dispositivo e os downloads existentes permanecem na fila. Para voltar ao catálogo original, selecione **Usar loja padrão**.
 
 O plugin consulta o catálogo remoto ao abrir a **Loja**. Sempre que o GitHub informa o commit atual da branch, o plugin carrega o JSON e as capas desse mesmo commit. Use o ícone **Atualizar catálogo** para buscar novamente sem sair da tela. Se o GitHub estiver indisponível, a Loja usa a última versão válida salva. Na primeira abertura da loja padrão sem cache, o plugin usa o catálogo incluído no ZIP. A Loja mostra um ícone quando uma capa remota está indisponível. A Loja também tenta descobrir o tamanho pelos metadados dos magnets exibidos e guarda o resultado após uma consulta bem-sucedida.
 
@@ -39,7 +46,7 @@ Quando há uma versão estável mais recente com instalador ZIP no GitHub do Dec
 1. Crie um repositório **público** no GitHub e clone-o na sua máquina.
 2. Crie `catalogo.json` na raiz, seguindo o exemplo abaixo, e guarde as capas em `imagens/`. Use conteúdos próprios ou que você tenha autorização para distribuir.
 3. Publique o JSON e as capas na **branch padrão** do seu repositório. Se ela for `main`, você pode usar os comandos abaixo.
-4. No Steam Deck, abra **Loja → Trocar de loja** e cole a URL do seu repositório. A instalação existente do Decky Torrent pode usar esse catálogo.
+4. No Modo Jogo, abra **Loja → Trocar de loja** e cole a URL do seu repositório. A instalação existente do Decky Torrent pode usar esse catálogo.
 
 ```bash
 git add catalogo.json imagens/
@@ -101,7 +108,7 @@ Ao abrir o HTML diretamente, sem vincular a pasta, **Salvar pacote** guarda o ca
 
 ### Publicar automaticamente ao salvar
 
-No Linux ou SteamOS, copie [`scripts/publicar-catalogo.py`](scripts/publicar-catalogo.py) para a pasta `scripts/` do seu clone. Com o Git autenticado e a branch local `main` sincronizada com `origin/main`, execute na raiz:
+No Linux, incluindo SteamOS, copie [`scripts/publicar-catalogo.py`](scripts/publicar-catalogo.py) para a pasta `scripts/` do seu clone. Com o Git autenticado e a branch local `main` sincronizada com `origin/main`, execute na raiz:
 
 ```bash
 python3 scripts/publicar-catalogo.py
@@ -125,9 +132,9 @@ Forneça um `aria2c` x86-64 portátil e o pacote de fontes correspondente. O ins
 1. Abra **Loja**, escolha uma categoria e selecione a capa do pacote. Escolha uma pasta. O plugin cria uma subpasta exclusiva para o pacote.
 2. Abra **Downloads**, pause, continue e feche o painel. Ao reabrir, confira o progresso. O backend guarda a fila e o aria2 preserva os dados parciais para retomada.
 3. Ao terminar, confira a notificação e o estado **Concluído** em Downloads. O aria2 usa `--seed-time=0`. Pode haver upload durante o download.
-4. Reabra o painel do **Decky Torrent**, escolha **Adicionar à Steam** e selecione o `.exe` do pacote. Confira o atalho na biblioteca. Para executar um programa Windows no SteamOS, habilite o Proton nas propriedades do atalho conforme necessário.
+4. Reabra o painel do **Decky Torrent**, escolha **Adicionar à Steam** e selecione o `.exe` do pacote. Confira o atalho na biblioteca. Para executar um programa Windows no Linux, habilite o Proton nas propriedades do atalho conforme necessário.
 
-A fila do plugin funciona em segundo plano enquanto o Deck está acordado. Reiniciar o backend interrompe a transferência até que ele recarregue o estado. A API de atalhos pertence ao cliente Steam e deve ser validada na versão do SteamOS usada no teste.
+A fila do plugin funciona em segundo plano enquanto o dispositivo está acordado. Reiniciar o backend interrompe a transferência até que ele recarregue o estado. A API de atalhos pertence ao cliente Steam e deve ser validada na versão instalada do cliente Steam.
 
 Na tela **Downloads**, **Apagar** pede confirmação. Para downloads incompletos, a confirmação cancela a transferência e exclui a subpasta do pacote. Para concluídos, a confirmação remove a entrada da fila e mantém os arquivos e atalhos.
 
