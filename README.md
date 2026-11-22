@@ -8,7 +8,9 @@ Disponível a partir da **v0.2.7**. No Modo Jogo, abra **Decky Torrent → Loja 
 
 O plugin procura `catalogo.json` na raiz da branch padrão do repositório e lê as capas pelos caminhos do campo `imagem`. Se o catálogo estiver ausente ou inválido, a loja anterior continua ativa. A escolha fica salva no Steam Deck e os downloads existentes permanecem na fila. Para voltar ao catálogo original, selecione **Usar loja padrão**.
 
-Ao reabrir o painel, o plugin consulta o catálogo remoto. Se o GitHub estiver indisponível, a Loja usa a última versão válida salva. As capas remotas dependem da rede e exibem um ícone quando indisponíveis. A Loja também tenta descobrir o tamanho pelos metadados dos magnets exibidos e guarda o resultado após uma consulta bem-sucedida.
+O plugin consulta o catálogo remoto ao abrir a **Loja**. Use o ícone **Atualizar catálogo** para buscar novamente sem sair da tela. Se o GitHub estiver indisponível, a Loja usa a última versão válida salva. As capas remotas dependem da rede e exibem um ícone quando indisponíveis. A Loja também tenta descobrir o tamanho pelos metadados dos magnets exibidos e guarda o resultado após uma consulta bem-sucedida.
+
+Quando há uma versão estável mais recente com instalador ZIP no GitHub do Decky Torrent, a Loja mostra um aviso com **Ver release**. A consulta sempre usa o repositório oficial do plugin, inclusive ao usar um catálogo de outra comunidade. O botão abre a página da versão para você decidir quando baixar e instalar.
 
 ## Criar seu próprio catálogo
 
@@ -57,9 +59,21 @@ Exemplo de `catalogo.json`:
 
 ### Editar pelo navegador
 
-Use a página [`editor/index.html`](editor/index.html) incluída no projeto. Se quiser manter o editor junto do seu catálogo, copie a pasta `editor/` para o seu clone. No Chrome ou Edge, abra a página pelo gerenciador de arquivos, clique em **Vincular pasta do projeto**, selecione a raiz que contém o seu `catalogo.json` e autorize a gravação. **Salvar pacote** grava o JSON e a capa diretamente nessa pasta. Vincule a pasta novamente se reabrir a página.
+Para gravar direto no projeto sem vincular a pasta, abra [`editor/abrir-editor.sh`](editor/abrir-editor.sh) ou execute este comando na raiz:
 
-Em navegadores sem acesso direto à pasta, use **Importar catálogo** para abrir o JSON e **Carregar pasta de capas** para carregar `imagens/`. Depois de editar, escolha **Exportar ZIP**, extraia na raiz do repositório e mantenha as capas que você não carregou no editor. Em seguida, faça commit e push.
+```bash
+python3 scripts/abrir-editor.py
+```
+
+O atalho abre o `index.html` no Firefox e usa um serviço local acessível apenas pela sua máquina. **Salvar pacote** grava o JSON e a capa na pasta do projeto. Mantenha o processo aberto enquanto usa o editor.
+
+Abra [`editor/index.html`](editor/index.html) pelo gerenciador de arquivos. O catálogo e as capas do projeto aparecem automaticamente, mesmo offline. Se copiar o editor para outro repositório, copie a pasta `editor/` inteira e execute `python3 scripts/publicar-catalogo.py --sync-editor` nesse repositório para gerar a cópia local a partir do seu `catalogo.json`.
+
+No Chrome ou Edge, use **Vincular pasta do projeto** para autorizar a gravação direta. **Salvar pacote** atualiza o JSON, grava a capa e atualiza a cópia usada na próxima abertura. O editor reutiliza a autorização se o navegador a mantiver. Se editar o JSON fora do editor, rode `python3 scripts/publicar-catalogo.py --sync-editor` para atualizar a cópia sem publicar no Git.
+
+Nos dois modos, ao digitar um título, o editor sugere capas da Steam quando encontra o jogo. Selecione uma sugestão e salve o pacote para copiar a capa para `imagens/`. A busca usa o App ID do Wikidata, consulta os metadados no SteamCMD API e carrega a imagem do CDN da Steam. Ela precisa de internet. Você também pode enviar uma capa manualmente.
+
+Sem uma pasta vinculada, **Salvar pacote** guarda o catálogo e as novas capas neste navegador, inclusive ao atualizar ou reabrir a página. Use **Exportar ZIP** para levar as alterações aos arquivos do projeto. Extraia o ZIP na raiz do repositório e mantenha as capas existentes que você não carregou no editor. **Importar catálogo** continua disponível para abrir um arquivo de outro projeto.
 
 ### Publicar automaticamente ao salvar
 
@@ -69,11 +83,11 @@ No Linux ou SteamOS, copie [`scripts/publicar-catalogo.py`](scripts/publicar-cat
 python3 scripts/publicar-catalogo.py
 ```
 
-Vincule essa mesma pasta no editor. Enquanto o monitor estiver aberto, ele faz commit e push do catálogo e das capas referenciadas quando você salva. O terminal mostra o resultado. Use `Ctrl+C` para parar ou execute `python3 scripts/publicar-catalogo.py --once` para publicar alterações já gravadas.
+Vincule essa mesma pasta no editor. Enquanto o monitor estiver aberto, ele faz commit e push do catálogo, das capas referenciadas e da cópia do editor, quando presente, ao salvar. O terminal mostra o resultado. Use `Ctrl+C` para parar ou execute `python3 scripts/publicar-catalogo.py --once` para publicar alterações já gravadas.
 
 ## Instalar pelo Decky
 
-Copie `decky-torrent-v0.2.7.zip` para o Steam Deck. Nas configurações do Decky, habilite o modo de desenvolvedor e abra **Desenvolvedor → Instalar plugin de arquivo ZIP**. Selecione o ZIP inteiro. O pacote de instalação inclui o `aria2c` para Linux x86-64. Se estiver vindo da versão Catálogo Decky, reinicie o Steam Deck após instalar para que o Decky recarregue o plugin com o novo nome. O instalador mantém a pasta interna da versão anterior.
+Copie `decky-torrent-v0.2.10.zip` para o Steam Deck. Nas configurações do Decky, habilite o modo de desenvolvedor e abra **Desenvolvedor → Instalar plugin de arquivo ZIP**. Selecione o ZIP inteiro. O pacote de instalação inclui o `aria2c` para Linux x86-64. Se estiver vindo da versão Catálogo Decky, reinicie o Steam Deck após instalar para que o Decky recarregue o plugin com o novo nome. O instalador mantém a pasta interna da versão anterior.
 
 A loja padrão consulta o `catalogo.json` da branch `main` de [markuusbrdev/deckytorrent](https://github.com/markuusbrdev/deckytorrent). Na primeira abertura sem acesso ao GitHub, o plugin usa o catálogo incluído no ZIP.
 

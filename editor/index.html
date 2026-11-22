@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Editor de catálogo · Decky Torrent</title>
   <link rel="stylesheet" href="editor.css">
+  <script src="catalogo-local.js" defer></script>
   <script src="editor.js" defer></script>
 </head>
 <body>
@@ -47,7 +48,7 @@
         </div>
         <form id="package-form" novalidate>
           <label for="name">Nome do pacote</label>
-          <input id="name" maxlength="150" required aria-describedby="form-error">
+          <input id="name" maxlength="150" required aria-describedby="cover-search-status form-error">
           <label for="magnet">Link magnet</label>
           <textarea id="magnet" rows="3" maxlength="8192" placeholder="magnet:?xt=urn:btih:…" spellcheck="false" required aria-describedby="form-error"></textarea>
           <label for="category">Categoria</label>
@@ -63,6 +64,10 @@
               <input id="cover" type="file" accept=".png,.jpg,.jpeg,.webp" aria-describedby="cover-help form-error">
               <p id="cover-help">PNG, JPEG ou WebP de até 1 MiB.</p>
             </div>
+          </div>
+          <div class="cover-search">
+            <p id="cover-search-status" role="status"></p>
+            <div id="cover-suggestions" class="cover-suggestions"></div>
           </div>
           <p id="form-error" class="error" role="alert"></p>
           <div class="form-actions">

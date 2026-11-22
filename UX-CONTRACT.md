@@ -23,4 +23,4 @@ O painel inicial mostra downloads com .exe disponível que ainda não viraram at
 | Feedback | Região de status do editor | Vínculo da pasta, gravação e exportação informam o resultado. |
 | Rolagem | Página do editor | Lista e formulário compartilham a rolagem vertical. |
 
-O editor mantém os campos e caminhos compatíveis com o leitor do plugin. Com uma pasta vinculada, as edições são gravadas no projeto ao salvar. Sem vínculo, ficam em memória até a exportação do ZIP. Uma capa já registrada no JSON pode ser mantida no repositório ou carregada para entrar no ZIP.
+O editor carrega a cópia local e as miniaturas na abertura. A busca de capa por título usa consultas canceláveis e exige escolher uma sugestão antes de gravar a imagem. O editor mantém os campos e caminhos compatíveis com o leitor do plugin. Quando aberto pelo atalho local ou com uma pasta vinculada, o editor grava as edições no projeto ao salvar. Sem vínculo, os pacotes salvos e as capas ficam no armazenamento do navegador e podem ser exportados em ZIP. Uma capa já registrada no JSON pode ser mantida no repositório ou carregada para entrar no ZIP.

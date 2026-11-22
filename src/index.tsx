@@ -5,8 +5,8 @@ import {
 import {
   ConfirmModal, DialogButton, DropdownItem, Focusable, Navigation, showModal, staticClasses, TextField,
 } from "@decky/ui";
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { FaArrowLeft, FaBoxOpen, FaDownload, FaSearch, FaStore } from "react-icons/fa";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { FaArrowLeft, FaBoxOpen, FaDownload, FaSearch, FaStore, FaSyncAlt } from "react-icons/fa";
 import { styles } from "./styles";
 
 type Option = { id: string; nome: string };
@@ -25,9 +25,11 @@ type Download = Option & {
   apagando: boolean | null;
 };
 type Queue = { downloads: Download[]; aviso: string };
+type PluginUpdate = { versao: string; url: string };
 
 const storeRoute = "/decky-torrent/loja";
 const downloadsRoute = "/decky-torrent/downloads";
+const getPluginUpdate = callable<[], PluginUpdate | null>("get_plugin_update");
 const getCatalog = callable<[refresh: boolean], Catalog>("get_catalog");
 const changeStore = callable<[repository: string], Catalog>("change_store");
 const getPackageSize = callable<[id: string, magnet: string], number | null>("get_package_size");
@@ -44,11 +46,18 @@ const labels: Record<Status, string> = {
 };
 const format = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 });
 
-let catalogRefresh: Promise<Catalog> | undefined;
+let storeVisit = 0;
+const storeVisitListeners = new Set<() => void>();
 
-function refreshCatalog() {
-  catalogRefresh ??= getCatalog(true).finally(() => { catalogRefresh = undefined; });
-  return catalogRefresh;
+function subscribeStoreVisit(listener: () => void) {
+  storeVisitListeners.add(listener);
+  return () => { storeVisitListeners.delete(listener); };
+}
+
+function openStore() {
+  storeVisit += 1;
+  storeVisitListeners.forEach((listener) => listener());
+  openPage(storeRoute);
 }
 
 function size(bytes: number) {
@@ -169,16 +178,16 @@ function Page({ title, children, toolbar }: { title: string; children: ReactNode
   return (
     <Focusable className="dt-page">
       <style>{styles}</style>
-      <main className="dt-page-inner" aria-label={title}>
+      <main className={`dt-page-inner${toolbar ? " dt-store-page" : ""}`} aria-label={title}>
         <Focusable className="dt-header" flow-children="right">
-          <div>
+          <div className="dt-page-heading">
             <DialogButton className="dt-back" onClick={() => Navigation.NavigateBack()}>
               <span className="dt-button-content"><FaArrowLeft aria-hidden /> Voltar</span>
             </DialogButton>
             <h1>{title}</h1>
           </div>
-          {toolbar}
         </Focusable>
+        {toolbar}
         {children}
       </main>
     </Focusable>
@@ -190,7 +199,7 @@ function PluginTitle() {
     <Focusable className={`${staticClasses.Title} dt-plugin-title`} flow-children="right">
       <style>{styles}</style>
       <span className="dt-plugin-name">Decky Torrent</span>
-      <DialogButton className="dt-nav-button" onClick={() => openPage(storeRoute)} onOKActionDescription="Loja">
+      <DialogButton className="dt-nav-button" onClick={openStore} onOKActionDescription="Loja">
         <FaStore aria-hidden />
         <span className="dt-sr-only">Loja</span>
       </DialogButton>
@@ -208,10 +217,6 @@ function Home() {
   const action = useAction();
   const [created, setCreated] = useState<Record<string, number>>({});
   const [limit, setLimit] = useState(12);
-
-  useEffect(() => {
-    if (visible) void refreshCatalog().catch(() => {});
-  }, [visible]);
 
   async function shortcut(job: Download) {
     const { realpath } = await openFilePicker(FileSelectionType.FILE, job.pasta, true, true, undefined, ["exe"]);
@@ -258,8 +263,12 @@ function searchText(value: string) {
 }
 
 function StorePage() {
+  const visit = useSyncExternalStore(subscribeStoreVisit, () => storeVisit);
+  const [update, setUpdate] = useState<PluginUpdate | null>(null);
   const [catalog, setCatalog] = useState<Catalog>();
   const [error, setError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshRequest, requestRefresh] = useState(0);
   const [storeOpen, setStoreOpen] = useState(false);
   const [repositoryDraft, setRepositoryDraft] = useState("");
   const storeRevision = useRef(0);
@@ -271,9 +280,20 @@ function StorePage() {
   const action = useAction();
 
   useEffect(() => {
+    let current = true;
+    void getPluginUpdate().then(
+      (result) => { if (current) setUpdate(result); },
+      () => {},
+    );
+    return () => { current = false; };
+  }, [visit]);
+
+  useEffect(() => {
     let mounted = true;
     const revision = storeRevision.current;
     const current = () => mounted && storeRevision.current === revision;
+    setRefreshing(true);
+    setError("");
     void (async () => {
       try {
         const cached = await getCatalog(false);
@@ -282,17 +302,19 @@ function StorePage() {
         if (current()) setError("Falha ao carregar o catálogo salvo.");
       }
       try {
-        const refreshed = await refreshCatalog();
+        const refreshed = await getCatalog(true);
         if (current()) {
           setCatalog(refreshed);
           setError("");
         }
       } catch {
-        if (current()) setError("Falha ao atualizar a Loja. Reabra esta tela para tentar novamente.");
+        if (current()) setError("Falha ao atualizar a Loja. Tente novamente.");
+      } finally {
+        if (current()) setRefreshing(false);
       }
     })();
     return () => { mounted = false; };
-  }, []);
+  }, [visit, refreshRequest]);
 
   async function download(entry: Package) {
     const home = await homeFolder().catch(() => "/home/deck");
@@ -311,6 +333,7 @@ function StorePage() {
       setSearchOpen(false);
       setLimit(12);
       setError("");
+      setRefreshing(false);
       setStoreOpen(false);
       toaster.toast({ title: "Loja alterada", body: next.loja });
     });
@@ -321,36 +344,13 @@ function StorePage() {
   const packages = catalog?.pacotes.filter((entry) =>
     (!selected || entry.categoria === selected) && (!term || searchText(entry.nome).includes(term)),
   );
-  const status = error || catalog?.aviso || (!catalog ? "Carregando a Loja…" : "");
+  const status = refreshing ? "Atualizando catálogo…" : error || catalog?.aviso || (!catalog ? "Carregando a Loja…" : "");
 
   return (
     <Page
       title="Loja"
       toolbar={
-        <Focusable className="dt-store-tools" flow-children="right">
-          <DialogButton
-            className="dt-search-toggle"
-            disabled={storeAction.busy || action.busy}
-            onClick={() => {
-              storeAction.clearError();
-              setRepositoryDraft(catalog?.loja ?? "");
-              setStoreOpen(!storeOpen);
-            }}
-          >
-            Trocar de loja
-          </DialogButton>
-          <DialogButton
-            className="dt-search-toggle"
-            onClick={() => {
-              setSearchOpen(!searchOpen);
-              if (searchOpen) setQuery("");
-              setLimit(12);
-            }}
-          >
-            <span className="dt-button-content">
-              <FaSearch aria-hidden /> {searchOpen ? "Fechar pesquisa" : "Pesquisar"}
-            </span>
-          </DialogButton>
+        <Focusable className="dt-store-toolbar" flow-children="right">
           {catalog && (
             <div className="dt-filter">
               <DropdownItem
@@ -361,9 +361,54 @@ function StorePage() {
               />
             </div>
           )}
+          <Focusable className="dt-store-tools" flow-children="right">
+            <DialogButton
+              className="dt-search-toggle dt-refresh"
+              disabled={refreshing || storeAction.busy}
+              onClick={() => requestRefresh((request) => request + 1)}
+              onOKActionDescription="Atualizar catálogo"
+            >
+              <FaSyncAlt aria-hidden />
+              <span className="dt-sr-only">Atualizar catálogo</span>
+            </DialogButton>
+            <DialogButton
+              className="dt-search-toggle"
+              disabled={refreshing || storeAction.busy || action.busy}
+              onClick={() => {
+                storeAction.clearError();
+                setRepositoryDraft(catalog?.loja ?? "");
+                setStoreOpen(!storeOpen);
+              }}
+            >
+              Trocar de loja
+            </DialogButton>
+            <DialogButton
+              className="dt-search-toggle"
+              onClick={() => {
+                setSearchOpen(!searchOpen);
+                if (searchOpen) setQuery("");
+                setLimit(12);
+              }}
+            >
+              <span className="dt-button-content">
+                <FaSearch aria-hidden /> {searchOpen ? "Fechar pesquisa" : "Pesquisar"}
+              </span>
+            </DialogButton>
+          </Focusable>
         </Focusable>
       }
     >
+      {update && (
+        <Focusable className="dt-release-notice" flow-children="right">
+          <span role="status">Decky Torrent <strong>{update.versao}</strong> disponível</span>
+          <DialogButton
+            className="dt-release-button"
+            onClick={() => SteamClient.System.OpenInSystemBrowser(update.url)}
+          >
+            Ver release
+          </DialogButton>
+        </Focusable>
+      )}
       {storeOpen && (
         <Focusable className="dt-store-form">
           <TextField

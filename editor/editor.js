@@ -7,6 +7,8 @@ const coverPattern = /^imagens\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+\.(png|jpe?g|
 const encoder = new TextEncoder();
 const catalogText = (data) => JSON.stringify(data, null, 2) + "\n";
 const covers = new Map();
+const snapshotName = "editor/catalogo-local.js";
+const snapshotText = (text) => `globalThis.deckyCatalog = ${text.trim()};\n`;
 const form = $("package-form");
 let catalog = { categorias: [], pacotes: [] };
 let selected = "";
@@ -16,6 +18,12 @@ let previewUrl;
 let exporting = false;
 let busy = false;
 let project;
+let directMode = false;
+let localPreviews = false;
+let suggestedFile;
+let coverTimer;
+let coverSearch;
+let coverPick = 0;
 let diskText;
 const supportsFolder = typeof window.showDirectoryPicker === "function";
 
@@ -62,12 +70,14 @@ function parseCatalog(text) {
 }
 
 function refreshStorageMode() {
-  $("storage-mode").textContent = project
+  $("storage-mode").textContent = directMode
+    ? "Gravação automática nos arquivos do projeto."
+    : project
     ? `Gravação direta na pasta ${project.name}`
     : supportsFolder
-      ? "Vincule a pasta do projeto para gravar ao salvar."
+      ? "Vincule a pasta uma vez para autorizar a gravação direta."
       : "Use Chrome ou Edge para gravar direto na pasta. Neste navegador, exporte o ZIP.";
-  $("link-folder").hidden = !supportsFolder;
+  $("link-folder").hidden = directMode || !supportsFolder;
   $("link-folder").textContent = project ? "Trocar pasta do projeto" : "Vincular pasta do projeto";
 }
 
@@ -78,10 +88,57 @@ async function fileHandle(folder, path, create = false) {
   return folder.getFileHandle(filename, { create });
 }
 
+function projectAccess(mode, visit) {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open("decky-catalog-editor", 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("projects");
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const database = request.result;
+      const transaction = database.transaction("projects", mode);
+      let result;
+      try {
+        result = visit(transaction.objectStore("projects"), location.pathname);
+      } catch (failure) {
+        transaction.abort();
+        database.close();
+        reject(failure);
+        return;
+      }
+      transaction.oncomplete = () => { database.close(); resolve(result.result); };
+      transaction.onabort = () => { database.close(); reject(transaction.error); };
+    };
+  });
+}
+
+function savedCatalogAccess(mode, visit) {
+  return projectAccess(mode, (store, key) => visit(store, [key, "catalog"]));
+}
+
+function persistCatalog(data, imagePath, image) {
+  const files = new Map([...covers].map(([path, cover]) => [path, cover.file]));
+  if (image) files.set(imagePath, image);
+  const used = new Set(data.pacotes.map(({ imagem }) => imagem));
+  const images = [...files].filter(([path]) => used.has(path));
+  return savedCatalogAccess("readwrite", (store, key) =>
+    store.put({ data, images, localPreviews }, key),
+  );
+}
+
+function clearSavedCatalog() {
+  return savedCatalogAccess("readwrite", (store, key) => store.delete(key));
+}
+
 async function availableCoverPath(id, extension, used) {
   for (let suffix = 1; ; suffix++) {
     const path = `imagens/${id}${suffix === 1 ? "" : "-" + suffix}.${extension}`;
     if (used.has(path)) continue;
+    if (directMode) {
+      const response = await fetch(`../${path}`, { method: "HEAD" });
+      if (response.status === 404) return path;
+      if (!response.ok) throw new Error("Não foi possível verificar a pasta de capas.");
+      continue;
+    }
     if (!project) return path;
     try {
       await fileHandle(project, path);
@@ -109,10 +166,33 @@ async function readCatalog(handle) {
   return file.text();
 }
 
+async function saveToProject(text, imagePath, image) {
+  let capa;
+  if (image) {
+    const bytes = new Uint8Array(await image.arrayBuffer());
+    let data = "";
+    for (let offset = 0; offset < bytes.length; offset += 8192) {
+      data += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
+    }
+    capa = { caminho: imagePath, dados: btoa(data) };
+  }
+  const response = await fetch("/api/catalogo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ anterior: diskText, catalogo: text, capa }),
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.erro || "Não foi possível gravar o catálogo.");
+  diskText = text;
+  if (result.aviso) $("storage-mode").textContent = result.aviso;
+}
+
 async function store(next, imagePath, image) {
   const text = catalogText(next);
   if (encoder.encode(text).length > MiB) throw new Error("O catálogo atingiu o limite de 1 MiB.");
-  if (project) {
+  if (directMode) {
+    await saveToProject(text, imagePath, image);
+  } else if (project) {
     const handle = await project.getFileHandle("catalogo.json");
     if (await readCatalog(handle) !== diskText) {
       throw new Error("O catalogo.json mudou fora do editor. Vincule a pasta novamente antes de gravar.");
@@ -124,22 +204,47 @@ async function store(next, imagePath, image) {
       throw new Error("Falha ao gravar na pasta. Confira a permissão de escrita e tente salvar novamente.");
     }
     diskText = text;
+    try {
+      await writeFile(await fileHandle(project, snapshotName, true), snapshotText(text));
+    } catch {
+      $("storage-mode").textContent = "Catálogo gravado. A cópia de abertura automática não pôde ser atualizada.";
+    }
+  } else {
+    try {
+      await persistCatalog(next, imagePath, image);
+    } catch {
+      throw new Error("O navegador não conseguiu guardar o catálogo. Vincule a pasta do projeto para salvar.");
+    }
   }
   if (image) keepCover(imagePath, image);
   catalog = next;
-  dirty = !project;
+  dirty = !project && !directMode;
 }
 
-function loadCatalog(next, nextProject, text, images = []) {
+function loadCatalog(next, nextProject, text, images = [], useLocalImages = false) {
   for (const cover of covers.values()) URL.revokeObjectURL(cover.url);
   covers.clear();
   for (const [path, file] of images) keepCover(path, file);
   catalog = next;
+  localPreviews = useLocalImages;
   project = nextProject;
   diskText = text;
   dirty = false;
   refreshStorageMode();
   fillForm();
+}
+
+async function projectCovers(folder, data) {
+  const images = [];
+  for (const path of new Set(data.pacotes.map(({ imagem }) => imagem))) {
+    try {
+      const file = await (await fileHandle(folder, path)).getFile();
+      if (file.size <= MiB) images.push([path, file]);
+    } catch {
+      // An unavailable cover can still be replaced in the editor.
+    }
+  }
+  return images;
 }
 
 $("link-folder").addEventListener("click", async () => {
@@ -157,16 +262,15 @@ $("link-folder").addEventListener("click", async () => {
     const text = await readCatalog(handle);
     const next = parseCatalog(text);
     if ((dirty || draft) && !await ask("Substituir catálogo?", "As alterações pendentes na página serão descartadas.", "Vincular pasta")) return;
-    const images = [];
-    for (const path of new Set(next.pacotes.map(({ imagem }) => imagem))) {
-      try {
-        const file = await (await fileHandle(folder, path)).getFile();
-        if (file.size <= MiB) images.push([path, file]);
-      } catch {
-        // Missing covers remain referenced and can be replaced in the editor.
-      }
-    }
+    const images = await projectCovers(folder, next);
+    await clearSavedCatalog().catch(() => {});
     loadCatalog(next, folder, text, images);
+    await projectAccess("readwrite", (store, key) => store.put(folder, key)).catch(() => {});
+    try {
+      await writeFile(await fileHandle(folder, snapshotName, true), snapshotText(text));
+    } catch {
+      // Saving the catalog still works if the editor folder cannot be written.
+    }
     notice("Pasta vinculada. As alterações serão gravadas no projeto ao salvar.");
   } catch (failure) {
     if (failure.name !== "AbortError") notice(failure instanceof SyntaxError ? "O catalogo.json da pasta é inválido." : failure.message);
@@ -218,17 +322,150 @@ function ask(title, message, action) {
   ));
 }
 
+function chosenCover() {
+  return $("cover").files[0] ?? suggestedFile;
+}
+
+function coverUrl(path) {
+  return covers.get(path)?.url || (localPreviews && path ? `../${path}` : "");
+}
+
+function stopCoverSearch() {
+  clearTimeout(coverTimer);
+  coverSearch?.abort();
+  $("cover-suggestions").replaceChildren();
+  $("cover-search-status").textContent = "";
+}
+
+async function wikidata(params, signal) {
+  const url = new URL("https://www.wikidata.org/w/api.php");
+  url.search = new URLSearchParams({ ...params, format: "json", origin: "*" });
+  const response = await fetch(url, { signal });
+  if (!response.ok) throw new Error("Busca de capas indisponível.");
+  return response.json();
+}
+
+async function suggestCovers(title, signal) {
+  const results = await wikidata({
+    action: "wbsearchentities", search: title, language: "en", limit: 6,
+  }, signal);
+  if (!results.search?.length) return [];
+  const { entities } = await wikidata({
+    action: "wbgetentities", ids: results.search.map(({ id }) => id).join("|"), props: "claims",
+  }, signal);
+  const seen = new Set();
+  const matches = results.search.flatMap(({ id, label }) => {
+    const claims = entities?.[id]?.claims?.P1733 ?? [];
+    const app = claims.find(({ rank, mainsnak }) =>
+      rank !== "deprecated" && /^[1-9][0-9]{0,11}$/.test(mainsnak?.datavalue?.value ?? ""),
+    )?.mainsnak.datavalue.value;
+    if (!app || seen.has(app)) return [];
+    seen.add(app);
+    return [{ label, app }];
+  }).slice(0, 4);
+  return Promise.all(matches.map(async ({ label, app }) => ({
+    label, url: await steamCoverUrl(app, signal),
+  })));
+}
+
+async function steamCoverUrl(app, signal) {
+  const base = `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${app}/`;
+  try {
+    const response = await fetch(`https://api.steamcmd.net/v1/info/${app}`, { signal });
+    if (response.ok) {
+      const { data } = await response.json();
+      const capsule = data?.[app]?.common?.library_assets_full?.library_capsule;
+      const filename = capsule?.image2x?.english ?? capsule?.image?.english;
+      if (typeof filename === "string" && /^(?:[a-f0-9]{40}\/)?[a-z0-9_]+\.(?:jpg|png|webp)$/i.test(filename)) {
+        return base + filename;
+      }
+    }
+  } catch {
+    // Older releases can still use the unversioned capsule path.
+  }
+  return base + "library_600x900.jpg";
+}
+
+async function useSuggestedCover(url, signal) {
+  const request = ++coverPick;
+  const status = $("cover-search-status");
+  status.textContent = "Carregando capa…";
+  try {
+    const response = await fetch(url, { signal });
+    if (!response.ok) throw new Error();
+    const blob = await response.blob();
+    if (!blob.type.startsWith("image/") || signal.aborted) throw new Error();
+    const bitmap = await createImageBitmap(blob);
+    try {
+      const canvas = document.createElement("canvas");
+      const scale = Math.min(1, 900 / Math.max(bitmap.width, bitmap.height));
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const cover = await new Promise((resolve) => canvas.toBlob(resolve, "image/webp", 0.88));
+      if (signal.aborted || request !== coverPick) return;
+      if (!cover || cover.size > MiB) throw new Error();
+      suggestedFile = new File([cover], "capa.webp", { type: cover.type });
+    } finally {
+      bitmap.close();
+    }
+    $("cover").value = "";
+    $("cover").removeAttribute("aria-invalid");
+    draft = true;
+    paintCover();
+    status.textContent = "Capa selecionada. Salve o pacote para aplicá-la.";
+  } catch {
+    if (!signal.aborted && request === coverPick) status.textContent = "Não foi possível usar essa capa. Escolha outra ou envie um arquivo.";
+  }
+}
+
+function scheduleCoverSearch() {
+  stopCoverSearch();
+  const title = $("name").value.trim();
+  if (title.length < 3) return;
+  coverSearch = new AbortController();
+  const { signal } = coverSearch;
+  coverTimer = setTimeout(async () => {
+    const status = $("cover-search-status");
+    status.textContent = "Buscando capas na Steam…";
+    try {
+      const results = await suggestCovers(title, signal);
+      if (signal.aborted) return;
+      status.textContent = results.length ? "Selecione uma capa da Steam" : "Nenhuma capa encontrada. Você pode enviar um arquivo.";
+      for (const { label, url } of results) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "cover-suggestion";
+        const image = document.createElement("img");
+        image.src = url;
+        image.alt = "";
+        image.addEventListener("error", () => {
+          button.remove();
+          if (!signal.aborted && !$("cover-suggestions").childElementCount) {
+            status.textContent = "Nenhuma capa disponível. Você pode enviar um arquivo.";
+          }
+        }, { once: true });
+        button.append(image, label);
+        button.addEventListener("click", () => useSuggestedCover(url, signal));
+        $("cover-suggestions").append(button);
+      }
+    } catch {
+      if (!signal.aborted) status.textContent = "Busca de capas indisponível. Você pode enviar um arquivo.";
+    }
+  }, 450);
+}
+
 function paintCover() {
   const saved = catalog.pacotes.find(({ id }) => id === selected);
-  const chosen = $("cover").files[0];
-  const image = chosen?.size <= MiB ? chosen : covers.get(saved?.imagem)?.file;
+  const chosen = chosenCover();
   if (previewUrl) URL.revokeObjectURL(previewUrl);
-  previewUrl = image ? URL.createObjectURL(image) : undefined;
+  previewUrl = chosen?.size <= MiB ? URL.createObjectURL(chosen) : undefined;
+  const url = previewUrl || coverUrl(saved?.imagem);
   const preview = $("preview-image");
-  preview.hidden = !image;
-  $("preview-text").hidden = Boolean(image);
+  preview.hidden = !url;
+  $("preview-text").hidden = Boolean(url);
   $("preview-text").textContent = saved ? "Capa no catálogo" : "Sem capa";
-  if (previewUrl) preview.src = previewUrl;
+  if (url) preview.src = url;
   else preview.removeAttribute("src");
 }
 
@@ -250,10 +487,10 @@ function renderList() {
     const thumb = document.createElement("span");
     thumb.className = "thumbnail";
     thumb.setAttribute("aria-hidden", "true");
-    const cover = covers.get(entry.imagem);
+    const cover = coverUrl(entry.imagem);
     if (cover) {
       const image = document.createElement("img");
-      image.src = cover.url;
+      image.src = cover;
       image.alt = "";
       image.loading = "lazy";
       image.addEventListener("error", () => { thumb.textContent = "—"; }, { once: true });
@@ -276,6 +513,8 @@ function renderList() {
 
 function fillForm(entry) {
   form.reset();
+  stopCoverSearch();
+  suggestedFile = undefined;
   clearErrors(form, "form-error");
   selected = entry?.id ?? "";
   draft = false;
@@ -304,7 +543,20 @@ form.addEventListener("input", (event) => {
   draft = true;
   event.target.removeAttribute("aria-invalid");
 });
-$("cover").addEventListener("change", paintCover);
+$("name").addEventListener("input", (event) => {
+  if (suggestedFile) {
+    suggestedFile = undefined;
+    paintCover();
+  }
+  if (!event.isComposing) scheduleCoverSearch();
+});
+$("name").addEventListener("compositionstart", stopCoverSearch);
+$("name").addEventListener("compositionend", scheduleCoverSearch);
+$("cover").addEventListener("change", () => {
+  stopCoverSearch();
+  suggestedFile = undefined;
+  paintCover();
+});
 $("preview-image").addEventListener("error", () => {
   $("preview-image").hidden = true;
   $("preview-text").hidden = false;
@@ -319,7 +571,7 @@ form.addEventListener("submit", async (event) => {
   const magnet = $("magnet").value.trim();
   const categoria = $("category").value;
   const prior = catalog.pacotes.find(({ id }) => id === selected);
-  const file = $("cover").files[0];
+  const file = chosenCover();
   if (!validName(nome)) return error("form-error", "name", "Informe o nome do pacote.");
   if (!validMagnet(magnet)) return error("form-error", "magnet", "Informe um magnet BitTorrent v1 com um hash válido.");
   if (!categoria) return error("form-error", "category", "Selecione uma categoria ou adicione uma nova.");
@@ -343,7 +595,7 @@ form.addEventListener("submit", async (event) => {
         form.inert = false;
         return error("form-error", "cover", "Não foi possível abrir a imagem. Escolha outra capa.");
       }
-      const used = new Set(catalog.pacotes.filter((entry) => entry !== prior || project).map((entry) => entry.imagem));
+      const used = new Set(catalog.pacotes.filter((entry) => entry !== prior || project || directMode).map((entry) => entry.imagem));
       imagem = await availableCoverPath(id, extension, used);
     }
     const entry = { ...prior, id, nome, magnet, categoria, imagem };
@@ -351,7 +603,7 @@ form.addEventListener("submit", async (event) => {
     await store({ ...catalog, pacotes }, imagem, file);
     form.inert = false;
     fillForm(entry);
-    notice(project ? `${entry.nome} gravado no projeto.` : `${entry.nome} salvo na página. Exporte o ZIP para gravar no projeto.`);
+    notice(project || directMode ? `${entry.nome} gravado no projeto.` : `${entry.nome} salvo neste navegador. Exporte o ZIP para gravar no projeto.`);
     $("name").focus();
   } catch (failure) {
     error("form-error", null, failure.message);
@@ -372,7 +624,7 @@ $("remove").addEventListener("click", async () => {
     await store({ ...catalog, pacotes });
     fillForm();
     $("new").focus();
-    notice(project ? "Pacote removido do catálogo no projeto." : "Pacote removido do catálogo na página.");
+    notice(project || directMode ? "Pacote removido do catálogo no projeto." : "Pacote removido do catálogo na página.");
   } catch (failure) {
     error("form-error", null, failure.message);
   } finally {
@@ -406,7 +658,7 @@ taxonomyForm.addEventListener("submit", async (event) => {
     await store({ ...catalog, categorias: [...catalog.categorias, category] });
     choices($("category"), catalog.categorias, "Selecione", currentCategory || category.id);
     taxonomyDialog.close();
-    notice(project ? `Categoria ${category.nome} gravada no projeto.` : `Categoria ${category.nome} criada.`);
+    notice(project || directMode ? `Categoria ${category.nome} gravada no projeto.` : `Categoria ${category.nome} criada.`);
   } catch (failure) {
     error("taxonomy-error", null, failure.message);
   } finally {
@@ -425,7 +677,15 @@ $("json-file").addEventListener("change", async () => {
   try {
     if (file.size > MiB) throw new Error("O JSON deve ter até 1 MiB.");
     const next = parseCatalog(await file.text());
+    if (directMode) {
+      if (!await ask("Substituir catálogo?", "O JSON importado substituirá o catálogo no projeto. As capas existentes serão mantidas.", "Importar catálogo")) return;
+      await store(next);
+      fillForm();
+      notice("Catálogo importado e gravado no projeto.");
+      return;
+    }
     if ((dirty || draft) && !await ask("Substituir catálogo?", "As alterações pendentes na página serão descartadas.", "Importar catálogo")) return;
+    await clearSavedCatalog().catch(() => {});
     loadCatalog(next);
     notice("Catálogo importado. Para incluir as capas existentes no ZIP, carregue a pasta imagens.");
   } catch (failure) {
@@ -517,12 +777,15 @@ $("export").addEventListener("click", async () => {
   $("export").disabled = true;
   try {
     const snapshot = catalogText(catalog);
-    const files = new Map([["catalogo.json", new Blob([snapshot])]]);
+    const files = new Map([
+      ["catalogo.json", new Blob([snapshot])],
+      [snapshotName, new Blob([snapshotText(snapshot)])],
+    ]);
     const images = new Set(catalog.pacotes.map(({ imagem }) => imagem));
     for (const path of images) {
       if (covers.has(path)) files.set(path, covers.get(path).file);
     }
-    const omitted = images.size - files.size + 1;
+    const omitted = images.size - files.size + 2;
     const archive = await zip(files);
     const url = URL.createObjectURL(archive);
     const link = Object.assign(document.createElement("a"), { href: url, download: "catalogo-decky.zip" });
@@ -543,10 +806,61 @@ $("export").addEventListener("click", async () => {
 });
 
 window.addEventListener("beforeunload", (event) => {
-  if (!dirty && !draft) return;
+  if (!draft) return;
   event.preventDefault();
   event.returnValue = true;
 });
 
 refreshStorageMode();
-fillForm();
+if (globalThis.deckyCatalog) {
+  try {
+    loadCatalog(parseCatalog(catalogText(globalThis.deckyCatalog)), undefined, undefined, [], true);
+  } catch {
+    notice("Não foi possível abrir a cópia local. Vincule a pasta do projeto.");
+  }
+} else {
+  fillForm();
+}
+
+void (async () => {
+  if (location.protocol === "http:" && location.hostname === "127.0.0.1") {
+    busy = true;
+    try {
+      const response = await fetch("/api/catalogo");
+      if (!response.ok) throw new Error();
+      const text = await response.text();
+      const next = parseCatalog(text);
+      directMode = true;
+      loadCatalog(next, undefined, text, [], true);
+      return;
+    } catch {
+      notice("O editor local não conseguiu abrir o catálogo. Confira se o atalho está rodando.");
+    } finally {
+      busy = false;
+    }
+  }
+  try {
+    const saved = await savedCatalogAccess("readonly", (store, key) => store.get(key));
+    if (saved && !busy && !project && !dirty && !draft && !selected) {
+      const next = parseCatalog(catalogText(saved.data));
+      loadCatalog(next, undefined, undefined, saved.images, saved.localPreviews);
+      dirty = true;
+      notice("Catálogo recuperado deste navegador. Exporte o ZIP para levar as alterações ao projeto.");
+      return;
+    }
+  } catch {
+    // The published snapshot is still available when local storage is unavailable.
+  }
+
+  if (!supportsFolder) return;
+  try {
+    const folder = await projectAccess("readonly", (store, key) => store.get(key));
+    if (!folder || await folder.queryPermission({ mode: "readwrite" }) !== "granted") return;
+    const text = await readCatalog(await folder.getFileHandle("catalogo.json"));
+    const next = parseCatalog(text);
+    const images = await projectCovers(folder, next);
+    if (!busy && !project && !dirty && !draft && !selected) loadCatalog(next, folder, text, images);
+  } catch {
+    // The local snapshot remains available if browser permission was revoked.
+  }
+})();

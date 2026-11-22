@@ -7,11 +7,13 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG = "catalogo.json"
+EDITOR_SNAPSHOT = "editor/catalogo-local.js"
 BRANCH = "refs/heads/main"
 MARKER = "Decky-Catalogo-Automatico: sim"
 IMAGE_PATH = re.compile(r"imagens/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_-]+\.(webp|jpg|jpeg|png)")
@@ -34,6 +36,26 @@ def catalog_images(content):
     if any(not IMAGE_PATH.fullmatch(image) for image in images):
         raise ValueError("O catálogo contém um caminho de capa inválido.")
     return sorted(images)
+
+
+def sync_editor():
+    if not (ROOT / "editor/index.html").is_file():
+        return False
+    content = (ROOT / CATALOG).read_text(encoding="utf-8").strip()
+    catalog_images(content)
+    snapshot = ROOT / EDITOR_SNAPSHOT
+    source = f"globalThis.deckyCatalog = {content};\n"
+    if snapshot.is_file() and snapshot.read_text(encoding="utf-8") == source:
+        return True
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=snapshot.parent, delete=False) as handle:
+        temporary = Path(handle.name)
+        try:
+            handle.write(source)
+            handle.flush()
+            temporary.replace(snapshot)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return True
 
 
 def local_assets():
@@ -87,6 +109,9 @@ def publish(paths, stamp, pending):
     if local_assets()[1] != stamp:
         return
 
+    if sync_editor():
+        paths.append(EDITOR_SNAPSHOT)
+
     # Make new covers known to Git without staging other working-tree changes.
     git("add", "--intent-to-add", "--", *paths)
     git("commit", "--only", "-m", "Atualiza catálogo do Decky Torrent", "-m", MARKER, "--", *paths)
@@ -124,8 +149,15 @@ def watch(once):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--once", action="store_true", help="Check for pending edits and exit.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--once", action="store_true", help="Check for pending edits and exit.")
+    mode.add_argument("--sync-editor", action="store_true", help="Refresh the local editor snapshot without publishing.")
     args = parser.parse_args()
+    if args.sync_editor:
+        if not sync_editor():
+            parser.exit(1, "O editor/index.html não foi encontrado neste projeto.\n")
+        print("Cópia local do editor atualizada.")
+        return
     lock_path = Path(git("rev-parse", "--absolute-git-dir").strip()) / "decky-catalogo.lock"
     with lock_path.open("a") as lock:
         try:

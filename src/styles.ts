@@ -40,13 +40,35 @@ export const styles = `
   background: radial-gradient(ellipse at 20% 0%, #263b4c, transparent 58%), #101922;
 }
 .dt-page-inner { max-width: 1280px; margin: 0 auto; padding: 20px clamp(16px, 4vw, 56px) 68px; }
+.dt-store-page { max-width: 1880px; padding-inline: clamp(16px, 4vw, 76px); }
+.dt-store-page .dt-page-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
+.dt-store-page .dt-page-heading h1 { margin: 0; }
 .dt-page h1 { margin: 12px 0 0; font-size: clamp(1.85rem, 4vw, 3rem); letter-spacing: -.04em; line-height: 1.05; }
 .dt-header { display: flex; justify-content: space-between; align-items: end; flex-wrap: wrap; gap: 12px; }
 .dt-header .dt-back { width: auto; min-width: 0; padding-inline: 12px; }
 .dt-button-content { display: inline-flex; align-items: center; gap: 7px; }
 .dt-store-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
-.dt-store-tools .dt-search-toggle { width: auto; min-width: 0; }
-.dt-filter { width: min(100%, 260px); }
+.dt-store-toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 8px 24px; margin-top: 14px; padding-bottom: 8px; border-bottom: 1px solid var(--dt-border);
+}
+.dt-store-page button.dt-search-toggle,
+.dt-store-page button.dt-release-button,
+.dt-store-page button.dt-back {
+  width: auto !important; min-width: 0 !important;
+}
+.dt-store-toolbar button.dt-search-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 0 !important; height: 42px !important; padding-block: 0;
+}
+.dt-store-toolbar button.dt-refresh { width: 44px !important; padding-inline: 0; }
+.dt-filter { width: min(100%, 240px); }
+.dt-release-notice {
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;
+  gap: 8px 16px; margin-top: 12px; padding: 8px 12px;
+  border: 1px solid var(--dt-border); border-radius: 8px; background: var(--dt-surface);
+}
+.dt-release-notice strong { color: var(--dt-accent); }
 .dt-search { max-width: 520px; margin-top: 12px; }
 .dt-store-form {
   max-width: 680px; margin-top: 12px; padding: 12px 16px;
@@ -55,7 +77,10 @@ export const styles = `
 .dt-store-form .dt-store-tools { margin-top: 8px; }
 .dt-page .dt-status { min-height: 1em; margin: 8px 0 12px; font-size: .82rem; }
 .dt-empty { border: 1px solid var(--dt-border); border-radius: 9px; padding: 20px; margin: 0; }
-.dt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 155px), 1fr)); gap: 14px; }
+.dt-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, min(100%, clamp(132px, 21vw, 224px)));
+  justify-content: center; gap: clamp(12px, 1.6vw, 24px);
+}
 /* Keep the cover flat even when a Steam theme styles focused DialogButtons. */
 .dt-page .dt-grid button.dt-card {
   display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start;

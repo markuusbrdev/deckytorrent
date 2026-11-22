@@ -6,7 +6,9 @@ import re
 import secrets
 import shutil
 import socket
+import ssl
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -21,6 +23,7 @@ STATUS_KEYS = [
     "downloadSpeed", "errorMessage", "files",
 ]
 TERMINAL = {"complete", "error"}
+RELEASE_REPO = "markuusbrdev/deckytorrent"
 
 
 def read_json(path):
@@ -108,18 +111,59 @@ def repository_parts(value):
     return match[1], match[2].removesuffix(".git")
 
 
-class NoCatalogRedirect(urllib.request.HTTPRedirectHandler):
+class NoGitHubRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args):
         return None
+
+
+def github_opener():
+    # Decky's embedded Python can use different default CA paths from SteamOS.
+    system_ca = Path("/etc/ssl/certs/ca-certificates.crt")
+    context = ssl.create_default_context(cafile=str(system_ca) if system_ca.is_file() else None)
+    return urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=context), NoGitHubRedirect(),
+    )
+
+
+def stable_version(value):
+    match = re.fullmatch(r"v?(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})", value or "")
+    return tuple(map(int, match.groups())) if match else None
+
+
+def read_release():
+    installed = stable_version(read_json(ROOT / "package.json").get("version"))
+    if not installed:
+        return None
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{RELEASE_REPO}/releases/latest",
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "Decky-Torrent"},
+    )
+    with github_opener().open(request, timeout=5) as response:
+        release = json.loads(response.read(524_289))
+    tag = release.get("tag_name")
+    version = stable_version(tag)
+    if not version or version <= installed or release.get("draft") or release.get("prerelease"):
+        return None
+    display = ".".join(map(str, version))
+    asset_name = f"decky-torrent-v{display}.zip"
+    if not any(asset.get("name") == asset_name and asset.get("state") == "uploaded"
+               for asset in release.get("assets", [])):
+        return None
+    return {"versao": f"v{display}", "url": f"https://github.com/{RELEASE_REPO}/releases/tag/{tag}"}
 
 
 def read_remote_catalog(url, cached):
     source = urllib.parse.urlsplit(url)
     if source.scheme != "https" or source.netloc != "raw.githubusercontent.com":
         raise ValueError("Configure a URL HTTPS do arquivo em raw.githubusercontent.com.")
-    headers = {"If-None-Match": cached["etag"]} if cached.get("etag") else {}
-    request = urllib.request.Request(url, headers=headers)
-    opener = urllib.request.build_opener(NoCatalogRedirect())
+    headers = {"Cache-Control": "no-cache"}
+    if cached.get("etag"):
+        headers["If-None-Match"] = cached["etag"]
+    params = urllib.parse.parse_qsl(source.query, keep_blank_values=True)
+    params.append(("decky_refresh", str(time.time_ns())))
+    request_url = source._replace(query=urllib.parse.urlencode(params)).geturl()
+    request = urllib.request.Request(request_url, headers=headers)
+    opener = github_opener()
     try:
         with opener.open(request, timeout=6) as response:
             body = response.read(1_048_577)
@@ -288,6 +332,9 @@ class Plugin:
         self.jobs = read_json(self.jobs_file) if self.jobs_file.exists() else {}
         self.lock = asyncio.Lock()
         self.catalog_lock = asyncio.Lock()
+        self.release_lock = asyncio.Lock()
+        self.release_checked_until = 0
+        self.available_release = None
         self.aria = Aria()
         self.size_slots = asyncio.Semaphore(2)
         self.size_tasks = {}
@@ -316,6 +363,17 @@ class Plugin:
     async def get_catalog(self, refresh):
         async with self.catalog_lock:
             return await asyncio.to_thread(self.load_catalog, refresh)
+
+    async def get_plugin_update(self):
+        async with self.release_lock:
+            if time.monotonic() >= self.release_checked_until:
+                try:
+                    self.available_release = await asyncio.to_thread(read_release)
+                    delay = 300
+                except (OSError, ValueError, TypeError, AttributeError):
+                    delay = 60
+                self.release_checked_until = time.monotonic() + delay
+            return self.available_release
 
     async def change_store(self, value):
         owner, repo = repository_parts(value)
@@ -366,7 +424,8 @@ class Plugin:
                 if updated is not cached:
                     save_json(cache_path, updated)
                     cached = updated
-            except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
+                decky.logger.warning("Falha ao atualizar o catálogo: %s", error)
                 notice = "Não foi possível atualizar a loja. Exibindo o catálogo salvo."
 
         raw = cached.get("data") or validate_catalog(read_json(ROOT / "catalogo.json"))

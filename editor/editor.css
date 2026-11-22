@@ -102,3 +102,9 @@ dialog h2, #confirm-body { margin-bottom: 14px; }
   :root { scrollbar-color: auto; }
   .package-row[aria-current="true"] { border-color: Highlight; }
 }
+
+.cover-search { margin-top: 10px; color: var(--muted); font-size: .82rem; }
+.cover-suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.cover-suggestions:empty { display: none; }
+.cover-suggestion { display: grid; grid-template-columns: 34px 1fr; align-items: center; gap: 8px; text-align: left; }
+.cover-suggestion img { width: 34px; height: 46px; object-fit: cover; border-radius: 2px; }
