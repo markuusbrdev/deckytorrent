@@ -30,6 +30,13 @@
       "magnet": "magnet:?xt=urn:btih:059d50eeae1f6ed546ec95748849ae52c3e0cf7a&dn=Hollow+Knight+Silksong&tr=http%3A%2F%2Fbt4.t-ru.org%2Fann%3Fpk%3De325e7a94cd8e7a73e5696b21b6c448a&tr=http%3A%2F%2Fretracker.local%2Fannounce",
       "categoria": "jogos",
       "imagem": "imagens/hollow-knight-silksong-linux.jpg"
+    },
+    {
+      "id": "baldurs-gate-iii",
+      "nome": "Baldurs Gate III",
+      "magnet": "magnet:?xt=urn:btih:4bef14da1d7e06ae5b5de9ac8bfbae86ab2b6f58&dn=Baldurs.Gate.3.GOG.Rip-InsaneRamZes&tr=http%3A%2F%2Fbt4.t-ru.org%2Fann%3Fpk%3De325e7a94cd8e7a73e5696b21b6c448a&tr=http%3A%2F%2Fretracker.local%2Fannounce",
+      "categoria": "jogos",
+      "imagem": "imagens/baldurs-gate-iii.jpg"
     }
   ]
 }
