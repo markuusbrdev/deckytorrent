@@ -219,6 +219,13 @@ globalThis.deckyCatalog = {
       "magnet": "magnet:?xt=urn:btih:d13ed31a5729ee32c600841e9b0c0d072ab2b905&dn=God+of+War+Ragnarok&tr=http%3A%2F%2Fbt2.t-ru.org%2Fann%3Fpk%3De325e7a94cd8e7a73e5696b21b6c448a&tr=http%3A%2F%2Fretracker.local%2Fannounce",
       "categoria": "jogos",
       "imagem": "imagens/god-of-war-ragnarok.webp"
+    },
+    {
+      "id": "phantom-blade-zero",
+      "nome": "Phantom Blade Zero",
+      "magnet": "magnet:?xt=urn:btih:dc7758c38ec88551f3be4ca21a852a28b39427b5&dn=Phantom.Blade.Zero-InsaneRamZes&tr=http%3A%2F%2Fbt.t-ru.org%2Fann%3Fpk%3De325e7a94cd8e7a73e5696b21b6c448a&tr=http%3A%2F%2Fretracker.local%2Fannounce",
+      "categoria": "jogos",
+      "imagem": "imagens/phantom-blade-zero.webp"
     }
   ]
 };
